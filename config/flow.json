@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "default_risk": "P1",
+  "max_calls": 40,
+  "max_doc_rounds": 2,
+  "max_fix_rounds": 2,
+  "diff_limit_bytes": 200000,
+  "test_timeout": 1800,
+  "allow_bash": [],
+  "roles": {
+    "triage": "tech-lead",
+    "prd": {"author": "product-manager", "reviewers": ["business-analyst"]},
+    "techspec": {"author": "senior-dev", "reviewers": ["cto"]},
+    "implement": {"P0": "senior-dev", "P1": "senior-dev", "P2": "middle-dev", "P3": "junior-dev"},
+    "code_review": {
+      "P0": ["code-reviewer", "payment-expert", "adversarial-qa"],
+      "P1": ["code-reviewer", "adversarial-qa"],
+      "P2": ["code-reviewer"],
+      "P3": ["peer-reviewer"]
+    }
+  },
+  "gates": {
+    "P0": ["prd", "techspec", "release"],
+    "P1": ["prd", "techspec", "release"],
+    "P2": ["techspec", "release"],
+    "P3": ["release"]
+  },
+  "docs": {"P0": true, "P1": true, "P2": true, "P3": false},
+  "skills": {"code-review": ["code-review-excellence"]}
+}

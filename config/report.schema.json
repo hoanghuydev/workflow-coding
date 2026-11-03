@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {"type": "string"},
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "text": {"type": "string"},
+          "source_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["id", "text", "source_ids"]
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["summary", "claims", "limitations"]
+}

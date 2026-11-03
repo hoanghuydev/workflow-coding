@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+runs/
+config/agents.local.json
+.env
+*.db
+*.db-wal
+*.db-shm
+.claude
+tasks/
+requests/

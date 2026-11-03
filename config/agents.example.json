@@ -1,0 +1,5 @@
+{
+  "codex": {"prefix": ["/absolute/path/to/codex"], "model": "REPLACE_WITH_EXACT_MODEL_ID", "effort": "high"},
+  "claude": {"prefix": ["/absolute/path/to/claude"], "model": "REPLACE_WITH_EXACT_MODEL_ID", "effort": "high"},
+  "antigravity": {"prefix": ["/absolute/path/to/agy"], "model": "REPLACE_WITH_EXACT_MODEL_ID", "effort": null}
+}

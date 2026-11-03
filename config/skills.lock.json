@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/wshobson/agents",
+  "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+  "license": "MIT",
+  "skills": [
+    {
+      "name": "multi-reviewer-patterns",
+      "path": "plugins/agent-teams/skills/multi-reviewer-patterns",
+      "files": {
+        "SKILL.md": "30a8e067af085d6ddbf4f3775b212b0b24137ecc431a3e8570e3d6a09823a62a",
+        "references/review-dimensions.md": "88b8f4eac2cdfeea9a4686aa07eff5ddaed40ecaee0a96b48db2a495cefda45e"
+      }
+    },
+    {
+      "name": "code-review-excellence",
+      "path": "plugins/developer-essentials/skills/code-review-excellence",
+      "files": {
+        "SKILL.md": "1e264e04e7d2db9f4de3d34576f444650233752ba79396ea96c1f8dc8df486ea",
+        "references/review-patterns.md": "c3841a3a0e0a21103de5e3ad23d073b565e87b8f54b07b2b56db23c8c94040c6",
+        "references/review-techniques.md": "3a6486a255659ec98a4b88299a498a63e4a7d17395327d95d84b74d27b205f5e"
+      }
+    }
+  ]
+}
