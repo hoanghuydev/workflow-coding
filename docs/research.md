@@ -65,26 +65,29 @@ nghĩa là AI đã đối chiếu với packet, chưa phải người kiểm ch�
 ## Skills
 
 Skill là tài liệu hướng dẫn được **nhúng vào packet**, nên cả ba CLI nhận cùng
-nội dung. Repo chỉ kèm hai skill mà code dùng mặc định, lấy từ
-[wshobson/agents](https://github.com/wshobson/agents) commit
-`7e2fb559cf4b824b27f1fec49fe88f7511066d26` (MIT, `third_party/wshobson-agents.LICENSE`):
-`multi-reviewer-patterns` (review/adjudication của research) và
-`code-review-excellence` (code review của work flow). Mỗi file được kiểm hash theo
-`config/skills.lock.json` trước khi gọi model. Script đi kèm skill trong lab không bao giờ được chạy.
+nội dung. Mỗi skill trong `.agents/skills/` có một mục trong `config/skills.lock.json`
+ghi nguồn (repository, commit) và hash từng file; flow kiểm hash trước khi gọi model.
+Script đi kèm skill trong lab không bao giờ được chạy.
 
-Thêm skill khác (ví dụ `llm-evaluation`): chép thư mục skill từ commit upstream vào
-`.agents/skills/<name>/`, rồi ghi hash vào lock (tham số thứ hai là đường dẫn upstream):
+| Skill | Nguồn | Dùng ở |
+| --- | --- | --- |
+| `multi-reviewer-patterns` | [wshobson/agents](https://github.com/wshobson/agents) (MIT, `third_party/wshobson-agents.LICENSE`) | review và adjudication của research |
+| `code-review-excellence` | wshobson/agents | code review của work flow |
+| `change-verification`, `decision-review`, `visual-consistency-review` | ai-guardrails v1.5 | task chọn bằng `--skill` |
+
+Thêm skill: chép thư mục skill vào `.agents/skills/<name>/`, rồi ghi nguồn và hash vào lock:
 
 ```bash
-.venv/bin/python - llm-evaluation plugins/<plugin>/skills/llm-evaluation <<'PY'
+.venv/bin/python - <name> <repository> <commit> <đường-dẫn-trong-repo-nguồn> <<'PY'
 import hashlib, json, sys
 from pathlib import Path
-name, upstream = sys.argv[1:3]
+name, repository, commit, path = sys.argv[1:5]
 folder, lock_path = Path(".agents/skills") / name, Path("config/skills.lock.json")
 lock = json.loads(lock_path.read_text())
 files = {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest()
          for p in sorted(folder.rglob("*")) if p.is_file()}
-lock["skills"] = [s for s in lock["skills"] if s["name"] != name] + [{"name": name, "path": upstream, "files": files}]
+entry = {"name": name, "repository": repository, "commit": commit, "path": path, "files": files}
+lock["skills"] = [s for s in lock["skills"] if s["name"] != name] + [entry]
 lock_path.write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n")
 PY
 ```

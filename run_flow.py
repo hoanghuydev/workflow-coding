@@ -18,7 +18,7 @@ from lab.state import run_lock
 
 
 def arguments(argv=None):
-    parser = argparse.ArgumentParser(description="SePay work flow with human gates (LangGraph)")
+    parser = argparse.ArgumentParser(description="workflow-coding: AI work flow with human gates (LangGraph)")
     sub = parser.add_subparsers(dest="command", required=True)
     start = sub.add_parser("start", help="Create a task and run until the first human gate")
     start.add_argument("--request", help="Markdown file describing the work")

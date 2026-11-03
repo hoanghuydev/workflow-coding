@@ -1,10 +1,10 @@
 {
-  "repository": "https://github.com/wshobson/agents",
-  "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
-  "license": "MIT",
   "skills": [
     {
       "name": "multi-reviewer-patterns",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
       "path": "plugins/agent-teams/skills/multi-reviewer-patterns",
       "files": {
         "SKILL.md": "30a8e067af085d6ddbf4f3775b212b0b24137ecc431a3e8570e3d6a09823a62a",
@@ -13,11 +13,44 @@
     },
     {
       "name": "code-review-excellence",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
       "path": "plugins/developer-essentials/skills/code-review-excellence",
       "files": {
         "SKILL.md": "1e264e04e7d2db9f4de3d34576f444650233752ba79396ea96c1f8dc8df486ea",
         "references/review-patterns.md": "c3841a3a0e0a21103de5e3ad23d073b565e87b8f54b07b2b56db23c8c94040c6",
         "references/review-techniques.md": "3a6486a255659ec98a4b88299a498a63e4a7d17395327d95d84b74d27b205f5e"
+      }
+    },
+    {
+      "name": "change-verification",
+      "repository": "ai-guardrails v1.5 (local repo)",
+      "commit": "96cdd9529ec9cb97c5217e0523d4b26081fa725c",
+      "path": "skills/change-verification",
+      "files": {
+        "SKILL.md": "8970c34d768122198ab460a930465d2a60debce2f0a272fce59e1dc9a16b5668",
+        "references/access-control.md": "aad4b9800027848f3c12fcfb5b6da87b874540f79ba85c8f4a945ab0a3fe4f48",
+        "references/review-prompt.md": "1deac6f1b6f9a15bfb8d281301ef2e8e1b6a74f93636bed21d6941dcd250a8ae"
+      }
+    },
+    {
+      "name": "decision-review",
+      "repository": "ai-guardrails v1.5 (local repo)",
+      "commit": "96cdd9529ec9cb97c5217e0523d4b26081fa725c",
+      "path": "skills/decision-review",
+      "files": {
+        "SKILL.md": "97b991ea08ac1ff89b3b4ce1ffdc902b280fa2ab4daa6f54a758f96005c36b79",
+        "references/templates.md": "0bbd84d6bcd2bb5dc54b55bc93a9d560630a1ef3979f14fd0c07452e714b45bb"
+      }
+    },
+    {
+      "name": "visual-consistency-review",
+      "repository": "ai-guardrails v1.5 (local repo)",
+      "commit": "96cdd9529ec9cb97c5217e0523d4b26081fa725c",
+      "path": "skills/visual-consistency-review",
+      "files": {
+        "SKILL.md": "48637aaa842750fc5b8ef96aef87d0a54d0448277883177a771c5ede29618c61"
       }
     }
   ]

@@ -1,4 +1,4 @@
-# SePay Research Lab
+# workflow-coding
 
 Điều phối ba AI coding CLI (Codex, Claude Code, Antigravity) làm việc như một đội
 phần mềm nhỏ: nhận yêu cầu, viết PRD, techspec, viết code, chạy test, review chéo,
@@ -30,7 +30,7 @@ Có hai lệnh:
 Cần Linux, Python 3.13, git, và ba CLI đã cài và đăng nhập sẵn: `codex`, `claude`, `agy`.
 
 ```bash
-git clone <repo> && cd sepay-research-lab
+git clone https://github.com/hoanghuydev/workflow-coding.git && cd workflow-coding
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock.txt
 cp config/agents.example.json config/agents.local.json
