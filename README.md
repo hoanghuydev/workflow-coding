@@ -214,6 +214,36 @@ giả, nếu Antigravity được giao viết code (chế độ ghi của nó ch
 hoặc nếu một mức rủi ro thiếu release gate. Mỗi task khóa (seal) cấu hình lúc
 tạo, nên sửa config không ảnh hưởng task đang chạy.
 
+## Chấm bài cuối lượt
+
+Mỗi lần AI bạn đang chat ở repo này trả lời xong, CLI chạy `hooks/stop_audit.py`. Script gửi
+bản sao transcript của phiên cho một model của hãng khác chấm, theo đề `hooks/stop-audit.md`.
+Đề chấm gồm: khẳng định không có output công cụ làm bằng chứng, ràng buộc của bạn bị bỏ sót,
+hành động chưa được phép (kể cả approve gate khi bạn chưa quyết), lộ dữ liệu nhạy cảm, việc dở
+báo là xong, đổi kết luận khi bị phản bác mà không có bằng chứng mới. Có lỗi thì AI phải sửa
+hoặc giải thích rồi mới dừng. Mỗi lượt chỉ bị chặn một lần. Người chấm lỗi (hết quota, quá giờ)
+thì AI phải báo lượt đó chưa được chấm.
+
+| Bạn chat bằng | File cấu hình | Người chấm | Cần làm một lần |
+| --- | --- | --- | --- |
+| Claude Code | `.claude/settings.json` (bị gitignore, chỉ máy bạn) | Codex `gpt-6.1-sol`, effort medium | không |
+| Codex | `.codex/hooks.json` | Claude `claude-opus-5-5`, effort medium | gõ `/hooks` và trust hook; làm lại khi hook đổi |
+| Antigravity | `.agents/hooks.json` | Claude `claude-opus-5-5`, effort medium | không |
+
+- **Worker của flow không bị chấm.** `lab/runtime.py` gắn `SEPAY_LAB_WORKER=1` cho mọi CLI nó
+  bật, script thấy cờ này thì bỏ qua. Người chấm cũng mang cờ này, nên không tự chấm chính nó.
+- **Tắt tạm:** mở CLI với `SEPAY_LAB_STOP_AUDIT=off`.
+- **Log** ở `~/.cache/sepay-lab-stop-audit/audit.log`, chỉ ghi kết quả và thời gian, không ghi nội dung.
+  Người chấm lỗi liên tục thì chỉ báo một lần mỗi phiên, các lần sau chỉ ghi `error_repeat` vào log.
+- **Giới hạn:**
+  - Người chấm vẫn là AI nên có thể bỏ sót hoặc bắt lỗi rất nhỏ.
+  - Bản sửa sau khi bị chặn không được chấm lại.
+  - Mỗi lượt chậm thêm khoảng 10–30 giây.
+  - Transcript của phiên được gửi sang hãng còn lại, nên đừng dán secret vào cuộc chat.
+  - Người chấm Claude chỉ đọc được bản sao transcript (`--restricted`). Sandbox read-only của Codex
+    vẫn đọc được file khác trên máy, nên đề chấm cấm nó mở file ngoài transcript.
+  - Codex chạy hook chưa trust mà không báo gì: sau khi sửa `.codex/hooks.json`, nhớ `/hooks` trust lại.
+
 ## Lưu ý an toàn
 
 - Lệnh test chạy code do AI viết ngay trên máy bạn. Quyền của CLI chưa phải cách

@@ -1,0 +1,11 @@
+{
+  "stop-audit": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ../hooks/stop_audit.py agy || exit 1",
+        "timeout": 480
+      }
+    ]
+  }
+}

@@ -191,9 +191,10 @@ async def worker(name, cfg, run_dir, schema, *, packet=None, validate_output=Non
         opts = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                 else {"start_new_session": True})
         with (work / "stdout.log").open("wb") as out, (work / "stderr.log").open("wb") as err:
+            # SEPAY_LAB_WORKER marks lab workers so the operator's Stop hook (hooks/stop_audit.py) skips them.
             proc = await asyncio.create_subprocess_exec(
                 *prefix, *args, cwd=cwd or work, stdin=subprocess.PIPE,
-                stdout=out, stderr=err, **opts)
+                stdout=out, stderr=err, env={**os.environ, "SEPAY_LAB_WORKER": "1"}, **opts)
             meta["pid"] = proc.pid
             write_json(work / "manifest.json", meta)
             if on_started:
