@@ -156,6 +156,18 @@
   "skills": {
     "code-review": [
       "code-review-excellence"
+    ],
+    "write-content": [
+      "avoid-ai-writing"
+    ],
+    "content-review": [
+      "avoid-ai-writing"
+    ],
+    "uxspec-review": [
+      "wcag-audit-patterns"
+    ],
+    "ui-review": [
+      "wcag-audit-patterns"
     ]
   }
 }

@@ -28,7 +28,8 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             (self.root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(runtime.ROOT / relative, self.root / relative)
         shutil.copytree(runtime.ROOT / "protocols", self.root / "protocols")
-        skills = ("code-review-excellence", "multi-reviewer-patterns")
+        flow = runtime.read_json(runtime.ROOT / "config/flow.json")
+        skills = {"multi-reviewer-patterns", *(name for names in flow["skills"].values() for name in names)}
         for name in skills:
             shutil.copytree(runtime.ROOT / ".agents/skills" / name, self.root / ".agents/skills" / name)
         lock = runtime.read_json(runtime.ROOT / "config/skills.lock.json")
@@ -339,6 +340,10 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
                              [("codex", f"write-{kind}"), ("claude", f"{kind}-review")])
             packet = (self.task.directory / "jobs/implement-1/codex/INPUT.md").read_text()
             self.assertIn(f"# Persona: {writer}", packet)
+            if kind == "content":  # both the writer and the editor carry the anti-AI-writing skill
+                editor = (self.task.directory / f"jobs/code-review-{reviewer}-1/claude/INPUT.md").read_text()
+                for text in (packet, editor):
+                    self.assertIn("## Imported skill avoid-ai-writing/SKILL.md", text)
             self.assertIn(written, snapshot.values["implementation"]["changed_files"])
             self.assertNotIn("prd", snapshot.values)
 

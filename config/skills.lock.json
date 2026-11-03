@@ -52,6 +52,118 @@
       "files": {
         "SKILL.md": "48637aaa842750fc5b8ef96aef87d0a54d0448277883177a771c5ede29618c61"
       }
+    },
+    {
+      "name": "avoid-ai-writing",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/avoid-ai-writing/skills/avoid-ai-writing",
+      "files": {
+        "SKILL.md": "3b0940b0014a64aaff405f367e44241095c96856cabcd0a01adf0ec33bbc1a66",
+        "references/pattern-catalog.md": "e085c85213c5e903e370d2c97831e1829dffead8346d202267d1a54298fb9595",
+        "references/profiles.md": "701afb02c9788cdfa60696c0e3f7cb37485c5174cc269f7fb1f234daf5c6b810",
+        "references/word-tiers.md": "8a693aa10f61c55ce3f92945cdf1472079a6b8a07bc0ff906bd38315681362e4"
+      },
+      "author": "Conor Bronsdon"
+    },
+    {
+      "name": "wcag-audit-patterns",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/accessibility-compliance/skills/wcag-audit-patterns",
+      "files": {
+        "SKILL.md": "db263a3405deb95a63175f33da4a9d82d8595599fbee4a81979059b35a7cec40",
+        "references/details.md": "0a61237ccb4e1b2cba4291f83e0747ad64ac9ba81b37427ee0e648537c9c78d6"
+      }
+    },
+    {
+      "name": "debugging-strategies",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/developer-essentials/skills/debugging-strategies",
+      "files": {
+        "SKILL.md": "1c8a71ccf478690589b6c7fc9d375e774b77910a38d01c7ca35e1220c2873f7d",
+        "references/tools-and-techniques.md": "4d604ce42201f9a829d230732ae13b0542f8c7ce13b98e95df5d295eb946fd99"
+      }
+    },
+    {
+      "name": "api-design-principles",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/backend-development/skills/api-design-principles",
+      "files": {
+        "SKILL.md": "1f6166c23c0a0f32d703c19d84b3c30c2873daefb9e8732339a009934fa17013",
+        "assets/api-design-checklist.md": "ef98cb8910cdc555514198df7becc6de8b04e1a98e2291b1440bc62e14cd07e5",
+        "assets/rest-api-template.py": "ff594a173b353fd359a6d7e391a6e15324434a5754cc51ae9a90a2e3625dd0c9",
+        "references/details.md": "e8b19b192ab1e1e99a5d7fed285670c2cfc0f23877338efe68da56eeaeaf1649",
+        "references/graphql-schema-design.md": "918937ba5341e589458874f2c48a8a188af61741d5ee19977fcf029dfe160a67",
+        "references/rest-best-practices.md": "675fbafdd5a6d5ac2c17ab97e17c90aa0a10c2a5608860128a8be14764130fae"
+      }
+    },
+    {
+      "name": "openapi-spec-generation",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/documentation-generation/skills/openapi-spec-generation",
+      "files": {
+        "SKILL.md": "8071736973f8a99cbe8644e21f638493ac062c77d650d8fabc4a469285485d7e",
+        "references/code-first-and-tooling.md": "533398d65b933040d13e642414e6b9846adbe7d5c95947223beffdb3ebe1590f",
+        "references/details.md": "b7c681062118a47126662bc6463b9be9430a45b983ddde71d1bdaf7fd091ad51"
+      }
+    },
+    {
+      "name": "database-migration",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/framework-migration/skills/database-migration",
+      "files": {
+        "SKILL.md": "d388db68c9f86beba823247f910b6a91c2fe8e12ef9b30b6e49f4b1bf19f1ab1",
+        "references/details.md": "075f4fb3f511d93597c966c0d5fd86c7fb3797cb6cdc47e6b389fa0538b838d3"
+      }
+    },
+    {
+      "name": "stride-analysis-patterns",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/security-scanning/skills/stride-analysis-patterns",
+      "files": {
+        "SKILL.md": "b7cfab85be4d04a81d22f79cc3b0e95aab8aa3ae4dfacbcf44de076dbeb16f1e",
+        "references/details.md": "c386eb04dacbbb52eaaed318e7681549c40bd4686cce2f0d17d24f1c03ae1049"
+      }
+    },
+    {
+      "name": "interaction-design",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/ui-design/skills/interaction-design",
+      "files": {
+        "SKILL.md": "87f2765ed1deeef3f1c06f9e4338ff103c391c6c4adcdffc885f3516b7c34ff2",
+        "references/animation-libraries.md": "92da251d881a6a0647f09b83c9cf8cbdfb5d408d54e1098097bb0eda336e6d0f",
+        "references/microinteraction-patterns.md": "c276b03468bacacf7a7d8d95c70114d9724854ac2e084ad63f0b6e1ef00a948a",
+        "references/scroll-animations.md": "34f32ef74c4f44bf57a721f95cd523b63dd1d02711f16ccb8472d1d7a4f78a35"
+      }
+    },
+    {
+      "name": "responsive-design",
+      "repository": "https://github.com/wshobson/agents",
+      "commit": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+      "license": "MIT",
+      "path": "plugins/ui-design/skills/responsive-design",
+      "files": {
+        "SKILL.md": "c8bd56f8fc0f122c4ff392b02617f0e6bb4a353b2d0189235c6ee77cdcfe8690",
+        "references/breakpoint-strategies.md": "d086c14641856aacdd38fd8aebf2988fb0055b7ed1b8773feb3104e69c7d1506",
+        "references/container-queries.md": "67b1697186a531751ec2aa364506919b9ae44680744603613c511d5132eb5a24",
+        "references/details.md": "6b8d84250249319719fc5d4a545628267edd16b8763c107536cf7341d37740b4",
+        "references/fluid-layouts.md": "d67ad19e57b015101da5d4c4a9208015909f60b89db5b7922d0bf9ca17673860"
+      }
     }
   ]
 }

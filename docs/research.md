@@ -69,11 +69,27 @@ nội dung. Mỗi skill trong `.agents/skills/` có một mục trong `config/sk
 ghi nguồn (repository, commit) và hash từng file; flow kiểm hash trước khi gọi model.
 Script đi kèm skill trong lab không bao giờ được chạy.
 
-| Skill | Nguồn | Dùng ở |
-| --- | --- | --- |
-| `multi-reviewer-patterns` | [wshobson/agents](https://github.com/wshobson/agents) (MIT, `third_party/wshobson-agents.LICENSE`) | review và adjudication của research |
-| `code-review-excellence` | wshobson/agents | code review của work flow |
-| `change-verification`, `decision-review`, `visual-consistency-review` | ai-guardrails v1.5 | task chọn bằng `--skill` |
+Skill **gắn cố định** được nhúng vào mọi lượt gọi của bước đó. Skill **theo task** chỉ được
+nhúng khi AI điều phối chọn bằng `--skill`. Cột KB là kích thước được nhúng vào mỗi lượt gọi.
+
+| Skill | KB | Dùng ở | Nguồn |
+| --- | --- | --- | --- |
+| `multi-reviewer-patterns` | 9 | gắn cố định: review và adjudication của research | wshobson/agents |
+| `code-review-excellence` | 13 | gắn cố định: code review | wshobson/agents |
+| `avoid-ai-writing` | 43 | gắn cố định: viết và soát content | wshobson/agents (tác giả Conor Bronsdon) |
+| `wcag-audit-patterns` | 12 | gắn cố định: review đặc tả UX và review UI | wshobson/agents |
+| `change-verification` | 9 | theo task: sửa bug, thay đổi đụng tiền, quyền, dữ liệu | ai-guardrails v1.5 |
+| `decision-review` | 5 | theo task: quyết định thiết kế, UX, API, phân quyền còn mở | ai-guardrails v1.5 |
+| `visual-consistency-review` | 3 | theo task: output là ảnh, sprite, animation | ai-guardrails v1.5 |
+| `debugging-strategies` | 12 | theo task: sửa bug, tìm nguyên nhân gốc | wshobson/agents |
+| `api-design-principles` | 29 | theo task: thiết kế hoặc đổi API | wshobson/agents |
+| `openapi-spec-generation` | 25 | theo task: docs API, OpenAPI | wshobson/agents |
+| `database-migration` | 9 | theo task: migration dữ liệu | wshobson/agents |
+| `stride-analysis-patterns` | 20 | theo task: thay đổi về bảo mật, phân quyền (P0) | wshobson/agents |
+| `interaction-design` | 40 | theo task, loại `design`: tương tác, chuyển động | wshobson/agents |
+| `responsive-design` | 43 | theo task, loại `design`: layout trên nhiều cỡ màn hình | wshobson/agents |
+
+License và tác giả: `third_party/NOTICE.md`.
 
 Thêm skill: chép thư mục skill vào `.agents/skills/<name>/`, rồi ghi nguồn và hash vào lock:
 
