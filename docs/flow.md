@@ -34,21 +34,67 @@ dẫn tới `finalize` với trạng thái `rejected`. Chạy
 
 ## Vai trò theo rủi ro
 
-Ba lớp cấu hình tách nhau: runtime và đường dẫn
-CLI ở `config/agents.local.json`, model/effort và persona ở `config/personas.json`,
-phân công và chính sách ở `config/flow.json`.
+Ba lớp cấu hình tách nhau:
+
+- **`config/agents.local.json`:** đường dẫn CLI của máy.
+- **`config/personas.json`:** persona, gồm runtime, model, effort mặc định, model đối chứng (`challenger`) và các trường prompt.
+- **`config/flow.json` → `roles`:** bước nào ở mức rủi ro nào dùng persona nào.
+
+Một mục trong `roles` có thể là tên persona, hoặc dạng `{"persona", "model", "effort"}`
+để đổi model hay effort riêng cho bước đó. Dạng thứ hai không được đổi runtime.
 
 | Tier | Ví dụ | Tài liệu | Gate | Implement | Code review |
 | --- | --- | --- | --- | --- | --- |
-| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | PRD, techspec, release | senior-dev (Codex high) | code-reviewer + payment-expert (Claude) + adversarial-qa (Antigravity) |
-| P1 | deploy, migration, tích hợp | PRD + techspec | PRD, techspec, release | senior-dev | code-reviewer + adversarial-qa |
-| P2 | danh sách, bộ lọc, dashboard | PRD + techspec | techspec, release | middle-dev (Codex medium) | code-reviewer |
-| P3 | demo, thử nghiệm | không | release | junior-dev (Claude Sonnet low) | peer-reviewer (Codex) |
+| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | PRD, techspec, release | engineer (Codex Sol high) | code-reviewer (Opus high) + critical-invariants-reviewer (Opus xhigh) + adversarial-qa (Antigravity) |
+| P1 | deploy, migration, tích hợp | PRD + techspec | PRD, techspec, release | engineer (Sol high) | code-reviewer (Opus high) + adversarial-qa |
+| P2 | danh sách, bộ lọc, dashboard | PRD + techspec | techspec, release | engineer (Sol medium) | code-reviewer (Sonnet high) |
+| P3 | demo, thử nghiệm | không | release | engineer (Sol medium) | code-reviewer (Sonnet high) |
 
-PRD do product-manager (Codex) viết, business-analyst (Claude) review. Techspec do
-senior-dev (Codex) viết, cto (Claude) review. `check_roster` từ chối cấu hình mà
-reviewer dùng cùng runtime với tác giả, vai ghi code dùng Antigravity, hoặc tier
-thiếu release gate.
+Các bước còn lại:
+
+- **Triage:** triage-lead (Codex Sol medium).
+- **PRD:** product-manager (Codex Sol high) viết, requirements-reviewer (Claude Sonnet high) review.
+- **Techspec:** engineer (Sol high) viết, architecture-reviewer (Claude Opus high) review.
+
+`check_roster` từ chối các cấu hình sau:
+
+- reviewer dùng cùng runtime với tác giả;
+- vai ghi code dùng Antigravity;
+- tier thiếu release gate;
+- ghi đè sai khóa hoặc sai effort.
+
+### Danh sách persona
+
+Persona được chắt lọc từ BMAD-METHOD, agency-agents và wshobson/agents. Danh sách đã
+được Claude và Codex (GPT-6 Astra) phản biện qua hai vòng. Mọi model trong danh sách
+đã được gọi thử trên tài khoản này. Model đối chứng chỉ dùng khi so sánh, flow không
+gọi nó.
+
+| Persona | Dùng ở | Runtime / model / effort | Đối chứng |
+| --- | --- | --- | --- |
+| triage-lead | triage | Codex gpt-6.1-sol medium | gpt-6-luna high |
+| product-manager | viết PRD | Codex gpt-6.1-sol high | gpt-6.1-terra high |
+| requirements-reviewer | review PRD | Claude sonnet-5-5 high | opus-5-5 high |
+| engineer | techspec, implement | Codex gpt-6.1-sol medium (high qua `roles`) | gpt-6.1-terra medium |
+| architecture-reviewer | review techspec | Claude opus-5-5 high | sonnet-5-5 high |
+| code-reviewer | review code | Claude sonnet-5-5 high (opus ở P0/P1) | opus-5-5 high |
+| critical-invariants-reviewer | review code P0 | Claude opus-5-5 xhigh | fable-5-1 high |
+| adversarial-qa | review code P0/P1 | Antigravity gemini-3.8-flash-high | claude-opus-4-6-thinking |
+| technical-writer | docs (chưa nối) | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
+| docs-verifier | docs (chưa nối) | Claude sonnet-5-5 high | opus-5-5 high |
+| copywriter | content (chưa nối) | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
+| content-editor | content (chưa nối) | Claude sonnet-5-5 medium | opus-5-5 medium |
+| ux-designer | design (chưa nối) | Codex gpt-6.1-terra high | gpt-6.1-sol high |
+| ui-reviewer | design (chưa nối) | Claude opus-5-5 high | Antigravity gemini-3.8-flash-high |
+
+Các persona ghi "chưa nối" đã đăng ký nhưng chưa được bước nào dùng, cho tới khi flow
+có `--kind`. Hai vai docs-verifier và ui-reviewer còn cần thêm bằng chứng từ supervisor
+mới làm đủ việc: ví dụ trong docs đã chạy thật, ảnh chụp giao diện đã render. Khi chưa
+có bằng chứng đó, kết luận của chúng phải ghi `unverified`.
+
+Effort cùng tên không tương đương giữa các model: medium của Opus khác medium của Sonnet.
+Codex CLI mặc định effort `low` cho Sol, Astra và Terra, nên persona nào cũng ghi effort
+rõ ràng.
 
 Mức rủi ro hiệu lực là mức nghiêm trọng hơn giữa `--risk` (mặc định
 `default_risk` = P1) và đề xuất của triage. Model chỉ được nâng, không được hạ.
@@ -59,7 +105,7 @@ dụng cho các bước sau, không chạy lại các gate đã qua.
 
 - **LangGraph điều phối, ledger giữ tiền.** LangGraph chạy lại cả node sau crash,
   sau lỗi của nhánh song song và khi resume một `interrupt()`. Job ID và packet là
-  hàm thuần của state (`prd-draft-2`, `code-review-cto-1`...), nên node chạy lại sẽ
+  hàm thuần của state (`prd-draft-2`, `code-review-code-reviewer-1`...), nên node chạy lại sẽ
   dùng lại job đã xong sau khi kiểm hash, không gọi model lần hai.
 - **Code quyết định đường đi.** Vòng sửa dựa trên finding blocker/major, kết quả
   test do supervisor tự chạy và giới hạn vòng. Verdict của model không tự định tuyến.

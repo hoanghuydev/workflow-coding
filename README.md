@@ -71,6 +71,12 @@ Ví dụ:
 > không đổi schema. CTO còn 1 finding major: chưa xử lý trạng thái rỗng. Bạn muốn
 > duyệt hay yêu cầu sửa?
 
+**Ranh giới:** AI mở trong repo này chỉ sửa trực tiếp repo này: rule chung, persona,
+protocol, skill chung, code của flow. Dự án khác chỉ được thay đổi qua flow. Muốn sửa
+nhanh trực tiếp một dự án khác thì mở AI ngay trong repo đó. Rule và skill riêng của
+dự án nằm trong repo dự án, phải commit ở đó trước khi start. Thay đổi ở repo này chỉ
+áp dụng cho task tạo sau đó, vì mỗi task đã khóa cấu hình lúc tạo.
+
 Quay lại sau nhiều ngày: hỏi AI "đang có task nào?". AI sẽ chạy `run_flow.py list`.
 Phần dưới là các lệnh mà AI chạy; bạn cũng có thể tự gõ.
 
@@ -168,7 +174,7 @@ với các kết luận được chia thành verified, disputed và inconclusive
 | File | Chứa gì |
 | --- | --- |
 | `config/agents.local.json` | Đường dẫn CLI, model và effort mặc định của máy bạn (không commit) |
-| `config/personas.json` | Persona: runtime, model/effort riêng, vai trò, tư duy, khi nào phải hỏi người |
+| `config/personas.json` | 14 persona: runtime, model, effort, model đối chứng, vai trò, tư duy, khi nào phải hỏi người. Danh sách: [docs/flow.md](docs/flow.md#danh-sách-persona) |
 | `config/flow.json` | Ai làm gì ở mức rủi ro nào, cổng duyệt, giới hạn vòng sửa, số lượt gọi |
 | `protocols/flow/*.md` | Hướng dẫn cho từng bước (triage, PRD, techspec, implement, review, QA) |
 | `protocols/*.md`, `config/review-rubric.md` | Hướng dẫn cho research |

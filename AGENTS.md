@@ -8,14 +8,30 @@ Antigravity through triage → PRD → techspec → code → supervisor-run test
 cross-review, and stops at gates where a human decides. `run_lab.py` is a standalone
 research pipeline. Human docs: `README.md`, `docs/flow.md`, `docs/research.md`.
 
-In this repo you usually do one of two jobs:
-
-1. **Operate the flow for the user** (default). Turn what they want into a task, run
-   it, read what comes back, and bring each decision to them in plain words.
-2. **Change the lab itself**, only when they ask for it. See "Developing the lab".
-
 Reply in the user's language (usually Vietnamese). Commands below run from the repo
 root with `.venv/bin/python`.
+
+## Which repo a request changes
+
+**You edit only this repo directly. Any other repo changes only through a flow task.**
+
+| The user wants to change | Lives in | What you do |
+| --- | --- | --- |
+| Code of another project | that project's repo | Start a flow task (see "Starting a task"). Never edit that repo yourself, even for a one-line fix. For a quick direct edit, the user opens an assistant in that repo |
+| That project's rules or skills (`AGENTS.md`, `CLAUDE.md`, `.agents/skills/`, `.claude/skills/`) | that project's repo | Tell the user these files live there and must be committed before `start`. Edit them only if the user explicitly asks; show the diff and leave the commit to them |
+| Rules for every project | `rules/*.md` here | Edit here |
+| Who does what, gates, limits, personas, models | `config/flow.json`, `config/personas.json` here | Edit here |
+| How a stage works | `protocols/flow/*.md` here | Edit here |
+| General skills | `.agents/skills/` and `config/skills.lock.json` here | Edit here; see `docs/research.md` "Skills" |
+| The flow's code or docs | `lab/`, `run_*.py`, `docs/`, `README.md` here | Edit here; see "Developing the lab" |
+
+If the scope is unclear, ask one question instead of guessing. For example, for "add a
+rule: no float for money", ask whether it applies to every project or to one.
+
+Changes here apply only to tasks created afterwards, because each task seals its
+inputs. A running task keeps the old version; to use the new one, reject it and start
+again. Once pushed, changes here reach the whole team: show the diff, run the tests,
+and commit or push only when asked.
 
 ## Rules for operating
 
@@ -178,6 +194,8 @@ and a throwaway repo, at no cost. Use it to show a new user how the flow works.
 
 - Run `.venv/bin/python -m unittest discover -s tests` before claiming a change works.
   The tests are offline and use `tests/fake_cli.py`. Never call real CLIs from tests.
+  To see a change end to end, use `run_flow.py start --demo`. Start a real task to
+  check a lab change only if the user asks, since it spends quota.
 - Keep the invariants listed in `docs/flow.md` ("Bất biến"). In particular:
   - Paid calls go through `JobRunner`, with job ids derived from state.
   - Code decides routing; model verdicts do not.

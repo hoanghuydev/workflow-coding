@@ -25,7 +25,7 @@ from .. import pipeline, runtime as lab_runtime
 from ..jobs import gather_all
 from ..state import State, now
 from . import contracts as c, render, workspace
-from .config import persona_cfg
+from .config import binding, persona_cfg
 
 FAILED_TESTS = {"failed", "timeout", "error"}
 
@@ -95,8 +95,9 @@ def make_packet(task, protocol, job_id, persona_id, context):
     return text.encode("utf-8")
 
 
-async def call(task, state, *, job_id, protocol, persona_id, context, schema, validate, access="read",
+async def call(task, state, *, job_id, protocol, ref, context, schema, validate, access="read",
                before_start=None):
+    persona_id, override = binding(ref)
     persona = task.personas[persona_id]
     task.runner.max_calls = state.get("max_calls") or task.settings["max_calls"]
     row = task.state.get(job_id)
@@ -104,7 +105,7 @@ async def call(task, state, *, job_id, protocol, persona_id, context, schema, va
     retry = row is not None and state.get("retry", {}).get(job_id) == row["attempts"]
     return await task.runner.run(job_id, protocol, persona["runtime"],
                                  make_packet(task, protocol, job_id, persona_id, context), schema, validate,
-                                 cfg=persona_cfg(persona, task.agents), access=access, cwd=task.worktree,
+                                 cfg=persona_cfg(persona, task.agents, override), access=access, cwd=task.worktree,
                                  allow_bash=task.settings["allow_bash"] if access == "write" else (),
                                  retry=retry, before_start=before_start)
 
@@ -152,7 +153,7 @@ def docs_entry(state):
 async def triage(state, runtime: Runtime[FlowContext]):
     task = runtime.context.task
     start = len(task.runner.blockers)
-    out = await call(task, state, job_id="triage", protocol="triage", persona_id=task.flow["roles"]["triage"],
+    out = await call(task, state, job_id="triage", protocol="triage", ref=task.flow["roles"]["triage"],
                      context={"operator_risk": task.settings["risk"], "default_risk": task.flow["default_risk"],
                               "research_brief_supplied": bool(state.get("research_brief"))},
                      schema=c.TRIAGE, validate=c.validate_triage)
@@ -277,7 +278,7 @@ def draft_node(doc):
                    "findings_to_resolve": required,
                    "other_findings": [f for f in previous if f["severity"] not in c.BLOCKING]}
         out = await call(task, state, job_id=f"{doc}-draft-{round_}", protocol=doc,
-                         persona_id=task.flow["roles"][doc]["author"], context=context, schema=schema,
+                         ref=task.flow["roles"][doc]["author"], context=context, schema=schema,
                          validate=lambda o: spec["validate"](o, state, required_ids))
         if out is None:
             return blocked(task, f"{doc}_draft", start)
@@ -298,15 +299,16 @@ def review_node(doc):
         round_ = state[f"{doc}_round"]
         targets = spec["targets"](state[doc])
         schema = c.restrict(c.DOC_REVIEW, ("findings", "[]", "target"), targets)
-        reviewers = task.flow["roles"][doc]["reviewers"]
+        refs = task.flow["roles"][doc]["reviewers"]
+        reviewers = [binding(ref)[0] for ref in refs]
         context = {**doc_context(state, doc), "round": round_, doc: state[doc], "targets": targets,
                    "supervisor_findings": state[f"{doc}_lint"],
                    "previous_findings": state.get(f"{doc}_findings", []) if round_ > 1 else []}
         results = await gather_all(
             call(task, state, job_id=f"{doc}-review-{persona}-{round_}", protocol=f"{doc}-review",
-                 persona_id=persona, context=context, schema=schema,
+                 ref=ref, context=context, schema=schema,
                  validate=lambda o: c.validate_doc_review(o, targets))
-            for persona in reviewers)
+            for persona, ref in zip(reviewers, refs))
         if any(result is None for result in results):
             return blocked(task, f"{doc}_review", start)
         findings = [f for persona, result in zip(reviewers, results) for f in c.tag(result["findings"], persona)]
@@ -392,7 +394,8 @@ async def implement(state, runtime: Runtime[FlowContext]):
                                 "suggestion": "Sửa để toàn bộ test đạt; xem tests.tail trong context."}]
     required += human_findings(state, "code")
     required_ids = [f["id"] for f in required]
-    persona_id = task.flow["roles"]["implement"][state["risk"]]
+    ref = task.flow["roles"]["implement"][state["risk"]]
+    persona_id, override = binding(ref)
     persona = task.personas[persona_id]
     context = {"risk": state["risk"], "triage": state["triage"], "prd": state.get("prd"),
                "techspec": state.get("techspec"), "research": state.get("research"), "round": round_,
@@ -405,14 +408,14 @@ async def implement(state, runtime: Runtime[FlowContext]):
             workspace.archive_and_reset(task.worktree, task.directory / "attempts" /
                                         f"implement-{round_}-dirty-{uuid4().hex[:8]}.patch")
 
-    out = await call(task, state, job_id=f"implement-{round_}", protocol="implement", persona_id=persona_id,
+    out = await call(task, state, job_id=f"implement-{round_}", protocol="implement", ref=ref,
                      context=context, access="write", before_start=before_start,
                      schema=c.restrict(c.IMPLEMENT, ("resolutions", "[]", "finding_id"), required_ids),
                      validate=lambda o: c.validate_implement(o, required_ids))
     if out is None:
         return blocked(task, "implement", start)
     round_base = state["implementation"]["head"] if round_ > 1 else task.settings["base_sha"]
-    cfg = persona_cfg(persona, task.agents)
+    cfg = persona_cfg(persona, task.agents, override)
     workspace.commit_all(task.worktree, "\n".join([
         f"flow({task.id}): implement round {round_}", "", out["summary"][:2000], "",
         f"Flow-Task: {task.id}", f"Flow-Job: implement-{round_}", f"Flow-Persona: {persona_id}",
@@ -467,7 +470,8 @@ async def code_review(state, runtime: Runtime[FlowContext]):
     files = workspace.known_files(task.worktree, base, tip)
     criteria = c.acceptance_ids(state.get("prd"))
     tests = state["tests"]
-    reviewers = task.flow["roles"]["code_review"][state["risk"]]
+    refs = task.flow["roles"]["code_review"][state["risk"]]
+    reviewers = [binding(ref)[0] for ref in refs]
     context = {"risk": state["risk"], "prd": state.get("prd"), "techspec": state.get("techspec"), "round": round_,
                "diff": diff, "diff_truncated": truncated,
                "tests": {k: tests.get(k) for k in ("status", "exit_code", "command", "tail")},
@@ -479,9 +483,9 @@ async def code_review(state, runtime: Runtime[FlowContext]):
     schema = c.restrict(c.CODE_REVIEW, ("acceptance", "[]", "id"), criteria)
     results = await gather_all(
         call(task, state, job_id=f"code-review-{persona}-{round_}",
-             protocol=task.personas[persona].get("protocol", "code-review"), persona_id=persona,
+             protocol=task.personas[persona].get("protocol", "code-review"), ref=ref,
              context=context, schema=schema, validate=lambda o: c.validate_code_review(o, criteria, files))
-        for persona in reviewers)
+        for persona, ref in zip(reviewers, refs))
     if any(result is None for result in results):
         return blocked(task, "code_review", start)
     findings, acceptance = [], {}

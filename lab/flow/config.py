@@ -7,25 +7,45 @@ GATES = {"prd", "techspec", "release"}
 PROTOCOLS = {"code-review", "qa"}
 
 
-def persona_cfg(persona, agents):
-    """CLI config for one persona: the runtime's executable plus persona overrides."""
+BINDING_KEYS = {"persona", "model", "effort"}
+
+
+def binding(ref):
+    """A roles entry: a persona id, or {"persona": id, "model": ..., "effort": ...} to tune one
+    stage without a second persona. Overrides never change the runtime."""
+    if isinstance(ref, str):
+        return ref, {}
+    return ref["persona"], {key: ref[key] for key in ("model", "effort") if key in ref}
+
+
+def persona_cfg(persona, agents, override=None):
+    """CLI config: the runtime's executable, then persona defaults, then the stage override."""
     base = agents[persona["runtime"]]
-    return {"prefix": base["prefix"], "model": persona.get("model") or base["model"],
-            "effort": persona["effort"] if "effort" in persona else base.get("effort")}
+    merged = {**persona, **(override or {})}
+    return {"prefix": base["prefix"], "model": merged.get("model") or base["model"],
+            "effort": merged["effort"] if "effort" in merged else base.get("effort")}
 
 
 def check_roster(flow, personas, agents):
     """Reject a roster that breaks independence or gives write access to an unverified runtime."""
-    def persona(name, where):
+    def settings(values, where):
+        if values.get("effort") is not None and values["effort"] not in runtime.EFFORTS:
+            raise ValueError(f"Invalid effort in {where}")
+        if values.get("model") is not None and (not isinstance(values["model"], str) or not values["model"].strip()):
+            raise ValueError(f"Invalid model in {where}")
+
+    def persona(ref, where):
+        if not isinstance(ref, str) and (not isinstance(ref, dict) or "persona" not in ref
+                                         or set(ref) - BINDING_KEYS):
+            raise ValueError(f"{where} must be a persona id or {{persona, model, effort}}")
+        name, override = binding(ref)
         if name not in personas:
             raise ValueError(f"Unknown persona {name!r} in {where}")
         entry = personas[name]
         if entry.get("runtime") not in agents:
             raise ValueError(f"Persona {name} uses an unconfigured runtime")
-        if entry.get("effort") is not None and entry["effort"] not in runtime.EFFORTS:
-            raise ValueError(f"Invalid effort for persona {name}")
-        if entry.get("model") is not None and (not isinstance(entry["model"], str) or not entry["model"].strip()):
-            raise ValueError(f"Invalid model for persona {name}")
+        settings(entry, f"persona {name}")
+        settings(override, where)
         for key in ("role", "mindset", "scope", "escalation"):
             if not entry.get(key):
                 raise ValueError(f"Persona {name} needs {key}")
@@ -52,7 +72,7 @@ def check_roster(flow, personas, agents):
         for reviewer in reviewers:
             if persona(reviewer, f"roles.code_review.{risk}") == implementer:
                 raise ValueError(f"Code reviewer {reviewer} must use a different runtime from implementer for {risk}")
-            if personas[reviewer].get("protocol", "code-review") not in PROTOCOLS:
+            if personas[binding(reviewer)[0]].get("protocol", "code-review") not in PROTOCOLS:
                 raise ValueError(f"Persona {reviewer} has an unknown review protocol")
         gates = flow["gates"][risk]
         if not set(gates) <= GATES or "release" not in gates:

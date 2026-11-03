@@ -68,8 +68,8 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_p2_flow_gates_commit_tests_and_finish_without_merge(self):
         snapshot = await self.start()
         self.assertEqual(self.gate(snapshot), "techspec")  # P2 has no PRD gate
-        self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-business-analyst-1",
-                                       "techspec-draft-1", "techspec-review-cto-1"])
+        self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-requirements-reviewer-1",
+                                       "techspec-draft-1", "techspec-review-architecture-reviewer-1"])
         snapshot = await self.decide(action="approve")
         self.assertEqual(self.gate(snapshot), "release")
         values = snapshot.values
@@ -196,15 +196,28 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gate(snapshot), "release")
         reviewers = {c["job"]: c["worker"] for c in self.calls() if c["job"].startswith("code-review-")}
         self.assertEqual(reviewers, {"code-review-code-reviewer-1": "claude",
-                                     "code-review-payment-expert-1": "claude",
+                                     "code-review-critical-invariants-reviewer-1": "claude",
                                      "code-review-adversarial-qa-1": "antigravity"})
         self.assertEqual(next(c for c in self.calls() if c["job"] == "implement-1")["worker"], "codex")
+        # Stage bindings tune one persona per tier: P0 implements at high effort, reviews with Opus.
+        manifest = lambda job, worker: runtime.read_json(self.task.directory / "jobs" / job / worker / "manifest.json")
+        self.assertEqual(manifest("implement-1", "codex")["requested_effort"], "high")
+        self.assertEqual(manifest("code-review-code-reviewer-1", "claude")["requested_model"], "claude-opus-5-5")
+        self.assertEqual(manifest("code-review-critical-invariants-reviewer-1", "claude")["requested_effort"], "xhigh")
 
     async def test_p3_skips_documents_and_records_write_mode_permission_denials(self):
+        # Claude write mode records denials instead of failing: give P3 a Claude implementer.
+        roster, flow = (runtime.read_json(self.root / f"config/{n}.json") for n in ("personas", "flow"))
+        personas = roster["personas"]
+        personas["claude-engineer"] = {**personas["engineer"], "runtime": "claude", "model": None}
+        personas["codex-reviewer"] = {**personas["code-reviewer"], "runtime": "codex", "model": None}
+        flow["roles"]["implement"]["P3"], flow["roles"]["code_review"]["P3"] = "claude-engineer", ["codex-reviewer"]
+        runtime.write_json(self.root / "config/personas.json", roster)
+        runtime.write_json(self.root / "config/flow.json", flow)
         self.behaviors({"triage": "risk_P3", "implement-1": "structured_denial"})
         snapshot = await self.start(risk="P3")
         self.assertEqual(self.gate(snapshot), "release")
-        self.assertEqual(self.jobs(), ["triage", "implement-1", "code-review-peer-reviewer-1"])
+        self.assertEqual(self.jobs(), ["triage", "implement-1", "code-review-codex-reviewer-1"])
         impl = snapshot.values["implementation"]
         self.assertTrue(impl["permission_denials"])
         self.assertEqual(next(c for c in self.calls() if c["job"] == "implement-1")["worker"], "claude")
@@ -229,9 +242,15 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         agents = flow_task.demo_agents(self.root)
         check_roster(flow, personas, agents)
         same = copy.deepcopy(flow)
-        same["roles"]["code_review"]["P2"] = ["peer-reviewer"]  # codex reviewing codex
+        same["roles"]["code_review"]["P2"] = ["triage-lead"]  # codex reviewing codex
         with self.assertRaisesRegex(ValueError, "different runtime"):
             check_roster(same, personas, agents)
+        for bad, error in (({"persona": "engineer", "runtime": "claude"}, "must be a persona id"),  # no runtime swap
+                           ({"persona": "engineer", "effort": "extreme"}, "Invalid effort")):
+            tuned = copy.deepcopy(flow)
+            tuned["roles"]["implement"]["P2"] = bad
+            with self.assertRaisesRegex(ValueError, error):
+                check_roster(tuned, personas, agents)
         writer = copy.deepcopy(flow)
         writer["roles"]["implement"]["P3"] = "adversarial-qa"
         with self.assertRaisesRegex(ValueError, "Antigravity"):
@@ -334,11 +353,11 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(human), 1)
 
     async def test_unresolved_doc_blockers_escalate_even_without_a_gate_for_the_tier(self):
-        self.behaviors({"prd-review-business-analyst-1": "blocking", "prd-review-business-analyst-2": "blocking"})
+        self.behaviors({"prd-review-requirements-reviewer-1": "blocking", "prd-review-requirements-reviewer-2": "blocking"})
         snapshot = await self.start()  # P2: normally no PRD gate
         self.assertEqual(self.gate(snapshot), "prd")
         summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
-        self.assertIn("business-analyst/F1", summary)
+        self.assertIn("requirements-reviewer/F1", summary)
 
     async def test_interrupted_research_retry_is_not_repeated_without_a_new_decision(self):
         self.behaviors({"triage": "needs_research", "audit-A": "nonzero"})

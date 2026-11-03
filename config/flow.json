@@ -8,23 +8,86 @@
   "test_timeout": 1800,
   "allow_bash": [],
   "roles": {
-    "triage": "tech-lead",
-    "prd": {"author": "product-manager", "reviewers": ["business-analyst"]},
-    "techspec": {"author": "senior-dev", "reviewers": ["cto"]},
-    "implement": {"P0": "senior-dev", "P1": "senior-dev", "P2": "middle-dev", "P3": "junior-dev"},
+    "triage": "triage-lead",
+    "prd": {
+      "author": "product-manager",
+      "reviewers": [
+        "requirements-reviewer"
+      ]
+    },
+    "techspec": {
+      "author": {
+        "persona": "engineer",
+        "effort": "high"
+      },
+      "reviewers": [
+        "architecture-reviewer"
+      ]
+    },
+    "implement": {
+      "P0": {
+        "persona": "engineer",
+        "effort": "high"
+      },
+      "P1": {
+        "persona": "engineer",
+        "effort": "high"
+      },
+      "P2": "engineer",
+      "P3": "engineer"
+    },
     "code_review": {
-      "P0": ["code-reviewer", "payment-expert", "adversarial-qa"],
-      "P1": ["code-reviewer", "adversarial-qa"],
-      "P2": ["code-reviewer"],
-      "P3": ["peer-reviewer"]
+      "P0": [
+        {
+          "persona": "code-reviewer",
+          "model": "claude-opus-5-5"
+        },
+        "critical-invariants-reviewer",
+        "adversarial-qa"
+      ],
+      "P1": [
+        {
+          "persona": "code-reviewer",
+          "model": "claude-opus-5-5"
+        },
+        "adversarial-qa"
+      ],
+      "P2": [
+        "code-reviewer"
+      ],
+      "P3": [
+        "code-reviewer"
+      ]
     }
   },
   "gates": {
-    "P0": ["prd", "techspec", "release"],
-    "P1": ["prd", "techspec", "release"],
-    "P2": ["techspec", "release"],
-    "P3": ["release"]
+    "P0": [
+      "prd",
+      "techspec",
+      "release"
+    ],
+    "P1": [
+      "prd",
+      "techspec",
+      "release"
+    ],
+    "P2": [
+      "techspec",
+      "release"
+    ],
+    "P3": [
+      "release"
+    ]
   },
-  "docs": {"P0": true, "P1": true, "P2": true, "P3": false},
-  "skills": {"code-review": ["code-review-excellence"]}
+  "docs": {
+    "P0": true,
+    "P1": true,
+    "P2": true,
+    "P3": false
+  },
+  "skills": {
+    "code-review": [
+      "code-review-excellence"
+    ]
+  }
 }
