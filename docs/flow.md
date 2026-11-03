@@ -28,9 +28,41 @@ flowchart TD
     PG & SG -->|revise| P & S
 ```
 
+Sơ đồ trên là loại việc `code`. Loại việc khác thay đổi đoạn tài liệu và vai trò, xem
+"Loại việc" bên dưới.
+
 Mọi node gọi model đều có thể dừng ở **blocked gate**. Mọi gate đều có `reject`,
 dẫn tới `finalize` với trạng thái `rejected`. Chạy
 `.venv/bin/python run_flow.py graph` để xem sơ đồ sinh từ code.
+
+## Loại việc (`--kind`)
+
+`start --kind` chọn đường đi. `config/flow.json` → `kinds` định nghĩa từng loại:
+
+- **`docs`:** những tài liệu sẽ viết.
+- **`gates`:** cổng duyệt cộng thêm.
+- **`implement_protocol`:** protocol cho bước viết.
+- **`roles`:** vai được ghi đè.
+
+Phần nào một loại không khai thì dùng lại của `code`.
+
+| Loại | Dùng khi | Tài liệu | Viết | Review |
+| --- | --- | --- | --- | --- |
+| `code` (mặc định) | Tính năng, sửa bug | PRD → techspec | engineer | code-reviewer (+ critical-invariants, adversarial-qa theo tier) |
+| `design` | Việc chủ yếu là UI/UX | PRD → **đặc tả UX** → techspec; luôn dừng ở cổng duyệt đặc tả UX | engineer | code-reviewer + **ui-reviewer** (+ theo tier) |
+| `docs` | Tài liệu, API reference | không | technical-writer (protocol `write-docs`) | docs-verifier |
+| `content` | Copy trang chủ, landing | không | copywriter (protocol `write-content`) | content-editor |
+
+Triage, mức rủi ro, rule, skill, ledger và cổng duyệt cuối giống nhau ở mọi loại. Cổng duyệt
+của một tài liệu chỉ xuất hiện khi loại việc có viết tài liệu đó, nên `docs` và `content` chỉ
+dừng ở cổng duyệt cuối. Với
+`docs` và `content`, nên truyền `--test` là lệnh kiểm được kết quả viết, ví dụ build site
+docs, kiểm link, kiểm OpenAPI hoặc build trang. Không có lệnh đó thì không có bằng chứng
+nào ngoài lời của reviewer.
+
+Sửa bug là loại `code`. Protocol PRD yêu cầu ghi hành vi hiện tại và hành vi mong đợi,
+và biến bước tái hiện lỗi thành acceptance criterion đang fail. Protocol techspec yêu cầu
+nêu nguyên nhân gốc kèm đường đi trong code.
 
 ## Vai trò theo rủi ro
 
@@ -80,17 +112,17 @@ gọi nó.
 | code-reviewer | review code | Claude sonnet-5-5 high (opus ở P0/P1) | opus-5-5 high |
 | critical-invariants-reviewer | review code P0 | Claude opus-5-5 xhigh | fable-5-1 high |
 | adversarial-qa | review code P0/P1 | Antigravity gemini-3.8-flash-high | claude-opus-4-6-thinking |
-| technical-writer | docs (chưa nối) | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
-| docs-verifier | docs (chưa nối) | Claude sonnet-5-5 high | opus-5-5 high |
-| copywriter | content (chưa nối) | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
-| content-editor | content (chưa nối) | Claude sonnet-5-5 medium | opus-5-5 medium |
-| ux-designer | design (chưa nối) | Codex gpt-6.1-terra high | gpt-6.1-sol high |
-| ui-reviewer | design (chưa nối) | Claude opus-5-5 high | Antigravity gemini-3.8-flash-high |
+| technical-writer | viết, loại `docs` | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
+| docs-verifier | review, loại `docs` | Claude sonnet-5-5 high | opus-5-5 high |
+| copywriter | viết, loại `content` | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
+| content-editor | review, loại `content` | Claude sonnet-5-5 medium | opus-5-5 medium |
+| ux-designer | đặc tả UX, loại `design` | Codex gpt-6.1-terra high | gpt-6.1-sol high |
+| ui-reviewer | review đặc tả UX và code, loại `design` | Claude opus-5-5 high | Antigravity gemini-3.8-flash-high |
 
-Các persona ghi "chưa nối" đã đăng ký nhưng chưa được bước nào dùng, cho tới khi flow
-có `--kind`. Hai vai docs-verifier và ui-reviewer còn cần thêm bằng chứng từ supervisor
-mới làm đủ việc: ví dụ trong docs đã chạy thật, ảnh chụp giao diện đã render. Khi chưa
-có bằng chứng đó, kết luận của chúng phải ghi `unverified`.
+docs-verifier chỉ coi một ví dụ là đã kiểm khi `--test` của supervisor thật sự chạy ví dụ đó.
+ui-reviewer chỉ thấy code và kết quả test, không thấy màn hình đã render. Những gì cần màn
+hình thật hay thao tác thật mới đánh giá được thì phải ghi `unverified`. Supervisor chưa
+tự chụp màn hình.
 
 Effort cùng tên không tương đương giữa các model: medium của Opus khác medium của Sonnet.
 Codex CLI mặc định effort `low` cho Sol, Astra và Terra, nên persona nào cũng ghi effort
@@ -202,7 +234,7 @@ tasks/<task-id>/
   checkpoints.db                     state LangGraph (thread_id = task id)
   state.db, jobs/, attempts/         ledger, packet, raw log, manifest từng job
   worktree/                          git worktree, nhánh flow/<task-id>
-  docs/prd.md, docs/techspec.md      bản render mới nhất (+ prd-rN.md theo vòng)
+  docs/prd.md, uxspec.md, techspec.md  bản render mới nhất (+ prd-rN.md theo vòng)
   gates/*.md                         tóm tắt cho người duyệt và lệnh trả lời
   tests/round-N.{log,json}           kết quả test do supervisor chạy
   research/                          run research khi có brief

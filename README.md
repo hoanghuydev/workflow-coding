@@ -102,6 +102,7 @@ trên trang /transactions. Dùng endpoint list hiện có. Không đổi schema 
 
 | Tham số | Ý nghĩa |
 | --- | --- |
+| `--kind` | Loại việc: `code` (tính năng, sửa bug; mặc định), `design` (UI/UX), `docs` (tài liệu), `content` (copy trang chủ). Loại việc quyết định các bước và persona; bạn không cần gọi persona |
 | `--repo`, `--base` | Repo đích và nhánh gốc. Agent làm trong worktree mới, nhánh `flow/<task-id>`; repo gốc không bị đụng |
 | `--test` | Lệnh test mà supervisor tự chạy sau mỗi vòng code. Đây là bằng chứng duy nhất được tin; lời model nói "test đã đạt" thì không |
 | `--risk` | Mức rủi ro tối thiểu (mặc định P1). Triage chỉ được nâng, không được hạ |
@@ -109,6 +110,15 @@ trên trang /transactions. Dùng endpoint list hiện có. Không đổi schema 
 | `--rules` | (Tùy chọn, lặp được) file rule thêm trong repo đích, ví dụ `docs/quy-uoc.md` |
 | `--skill` | (Tùy chọn, lặp được) skill cho task này, lấy từ repo dự án hoặc skill chung |
 | `--max-calls` | Giới hạn số lượt gọi model của task (mặc định 40) |
+
+Loại việc quyết định ai viết và ai review:
+
+| Loại | Các bước | Ví dụ lời nhờ |
+| --- | --- | --- |
+| `code` | PRD → techspec → code → test → review | "Thêm bộ lọc trạng thái", "Sửa lỗi ABC khi hoàn tiền" |
+| `design` | PRD → đặc tả UX (luôn dừng chờ duyệt) → techspec → code → review code + UI | "Làm lại màn hình in đơn" |
+| `docs` | technical-writer viết → docs-verifier đối chiếu với code | "Viết docs API webhook theo kiểu TikTok API" |
+| `content` | copywriter viết → content-editor soát | "Viết lại copy trang chủ" |
 
 Mức rủi ro quyết định số bước và số người review:
 

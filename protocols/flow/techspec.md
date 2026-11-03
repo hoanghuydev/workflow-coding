@@ -1,7 +1,8 @@
 # Write or revise the technical spec
 
 Read the repository first: its structure, conventions and tests. Design within
-the binding rules. Return the techspec schema. Choose the simplest design
+the binding rules. Return the techspec schema. For a defect, give the root cause with the code
+path that produces it, not only the symptom. Choose the simplest design
 that satisfies the PRD at the stated risk tier and reuse existing modules before
 adding new ones. Name concrete files. List the invariants that must never break;
 for payment work this includes idempotency, no double credit or debit, an unknown

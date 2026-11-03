@@ -110,7 +110,7 @@
                      "An essential example cannot be verified with the available environment"]
     },
     "docs-verifier": {
-      "runtime": "claude", "model": "claude-sonnet-5-5", "effort": "high",
+      "runtime": "claude", "model": "claude-sonnet-5-5", "effort": "high", "protocol": "docs-review",
       "challenger": {"runtime": "claude", "model": "claude-opus-5-5", "effort": "high"},
       "role": "Check that documentation matches supported behaviour.",
       "mindset": ["Trace changed claims to implementation, contracts and relevant tests",
@@ -134,7 +134,7 @@
                      "Conflicting audience, offer or voice requirements change the message"]
     },
     "content-editor": {
-      "runtime": "claude", "model": "claude-sonnet-5-5", "effort": "medium",
+      "runtime": "claude", "model": "claude-sonnet-5-5", "effort": "medium", "protocol": "content-review",
       "challenger": {"runtime": "claude", "model": "claude-opus-5-5", "effort": "medium"},
       "role": "Judge whether copy is clear, credible and right for its audience.",
       "mindset": ["Assess against the brief and voice examples, not personal taste",
@@ -158,7 +158,7 @@
                      "A critical journey lacks safe recovery or an accessible path"]
     },
     "ui-reviewer": {
-      "runtime": "claude", "model": "claude-opus-5-5", "effort": "high",
+      "runtime": "claude", "model": "claude-opus-5-5", "effort": "high", "protocol": "ui-review",
       "challenger": {"runtime": "antigravity", "model": "gemini-3.8-flash-high", "effort": null},
       "role": "Judge the UX specification and the implemented interface against the contract.",
       "mindset": ["Label spec review separately from rendered implementation review",

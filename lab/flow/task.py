@@ -23,7 +23,7 @@ from .. import contracts as research_contracts, pipeline, runtime
 from ..jobs import JobRunner
 from ..state import State, now
 from . import workspace
-from .config import check_roster
+from .config import check_roster, kind_config
 from .contracts import RISKS
 from .graph import FlowContext, build_graph
 
@@ -31,9 +31,11 @@ INLINE_LIMIT = 200_000  # bytes per rule file or skill inlined into every packet
 PROJECT_RULE_FILES = ("AGENTS.md", "CLAUDE.md")
 PROJECT_SKILL_DIRS = (".agents/skills", ".claude/skills")
 # Skills chosen with --skill guide the stages that read or write code; their scripts run only in implement.
-TASK_SKILL_STAGES = ("techspec", "techspec-review", "implement", "code-review", "qa")
+TASK_SKILL_STAGES = ("uxspec", "uxspec-review", "techspec", "techspec-review", "implement", "write-docs",
+                     "write-content", "code-review", "qa", "docs-review", "content-review", "ui-review")
 SCRIPT_RUNNERS = {".py": "python3", ".sh": "bash", ".js": "node"}
-PROTOCOLS = ("triage", "prd", "prd-review", "techspec", "techspec-review", "implement", "code-review", "qa")
+PROTOCOLS = ("triage", "prd", "prd-review", "uxspec", "uxspec-review", "techspec", "techspec-review", "implement",
+             "write-docs", "write-content", "code-review", "qa", "docs-review", "content-review", "ui-review")
 DEMO_REQUEST = """# Phí chuyển khoản
 
 Viết hàm `transfer_fee(amount)` trong `fees.py` tính phí chuyển khoản 1,1% theo đồng,
@@ -161,12 +163,14 @@ def demo_repo(path):
 
 
 async def create(root, *, request_path=None, repo=None, base="HEAD", test_command=None, risk=None, brief=None,
-                 max_calls=None, timeout=900, demo=False, research_skills=(), rule_paths=(), skill_names=()):
+                 max_calls=None, timeout=900, demo=False, research_skills=(), rule_paths=(), skill_names=(),
+                 kind="code"):
     root = Path(root).resolve()
     flow = runtime.read_json(root / "config/flow.json")
     personas = runtime.read_json(root / "config/personas.json")["personas"]
     agents = runtime.check_agents(demo_agents(root) if demo else runtime.read_json(root / "config/agents.local.json"))
     check_roster(flow, personas, agents)
+    kind_config(flow, kind)  # an unknown kind fails before anything is created
     policy = runtime.check_policy(runtime.read_json(root / "config/agy-research.json"))
     if risk is not None and risk not in RISKS:
         raise ValueError("--risk must be one of P0..P3")
@@ -225,7 +229,7 @@ async def create(root, *, request_path=None, repo=None, base="HEAD", test_comman
                     "base_sha": base_sha, "branch": f"flow/{task_id}", "test_command": argv,
                     "allow_bash": [*flow.get("allow_bash", []), *([shlex.join(argv)] if argv else []), *scripts],
                     "risk": risk, "demo": demo, "timeout": timeout, "max_calls": max_calls or flow["max_calls"],
-                    "research_skills": list(research_skills),
+                    "research_skills": list(research_skills), "kind": kind,
                     "skills": [{"name": s["name"], "source": s["source"]} for s in skills], "skill_scripts": scripts}
         runtime.write_json(directory / "task.json", settings)
         files = {str(p.relative_to(directory)): runtime.digest(p)

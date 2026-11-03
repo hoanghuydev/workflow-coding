@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -212,6 +213,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         personas["claude-engineer"] = {**personas["engineer"], "runtime": "claude", "model": None}
         personas["codex-reviewer"] = {**personas["code-reviewer"], "runtime": "codex", "model": None}
         flow["roles"]["implement"]["P3"], flow["roles"]["code_review"]["P3"] = "claude-engineer", ["codex-reviewer"]
+        flow["kinds"] = {"code": {}}  # the design kind's Claude UI reviewer would review a Claude implementer
         runtime.write_json(self.root / "config/personas.json", roster)
         runtime.write_json(self.root / "config/flow.json", flow)
         self.behaviors({"triage": "risk_P3", "implement-1": "structured_denial"})
@@ -245,6 +247,10 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         same["roles"]["code_review"]["P2"] = ["triage-lead"]  # codex reviewing codex
         with self.assertRaisesRegex(ValueError, "different runtime"):
             check_roster(same, personas, agents)
+        own = copy.deepcopy(flow)
+        own["kinds"]["docs"]["roles"]["code_review"] = ["product-manager"]  # codex reviewing the codex writer
+        with self.assertRaisesRegex(ValueError, "different runtime"):
+            check_roster(own, personas, agents)
         for bad, error in (({"persona": "engineer", "runtime": "claude"}, "must be a persona id"),  # no runtime swap
                            ({"persona": "engineer", "effort": "extreme"}, "Invalid effort")):
             tuned = copy.deepcopy(flow)
@@ -320,6 +326,38 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(packet.count("## Imported skill code-review-excellence/SKILL.md"), 1, job)
             self.assertEqual(f"- `{command}`" in packet, job == "implement-1", job)
         self.assertNotIn("Project skill", (jobs / "prd-draft-1/codex/INPUT.md").read_text())
+
+    async def test_docs_and_content_kinds_go_from_writer_to_editor_without_prd(self):
+        for kind, writer, reviewer, written in (("docs", "technical-writer", "docs-verifier", "docs/fees.md"),
+                                                ("content", "copywriter", "content-editor", "content/home.md")):
+            (self.root / "tests/calls.jsonl").unlink(missing_ok=True)
+            # The demo repo's fee tests fail until someone writes the code; a docs task gets its own check.
+            snapshot = await self.start(kind=kind, test_command=f"{sys.executable} -c pass")
+            self.assertEqual(self.gate(snapshot), "release", kind)
+            self.assertEqual(self.jobs(), ["triage", "implement-1", f"code-review-{reviewer}-1"])
+            self.assertEqual([(c["worker"], c["stage"]) for c in self.calls()[1:]],
+                             [("codex", f"write-{kind}"), ("claude", f"{kind}-review")])
+            packet = (self.task.directory / "jobs/implement-1/codex/INPUT.md").read_text()
+            self.assertIn(f"# Persona: {writer}", packet)
+            self.assertIn(written, snapshot.values["implementation"]["changed_files"])
+            self.assertNotIn("prd", snapshot.values)
+
+    async def test_design_kind_adds_a_ux_spec_gate_and_a_ui_reviewer(self):
+        snapshot = await self.start(kind="design")  # P2: no PRD gate, but design always gates the UX spec
+        self.assertEqual(self.gate(snapshot), "uxspec")
+        self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-requirements-reviewer-1",
+                                       "uxspec-draft-1", "uxspec-review-ui-reviewer-1"])
+        self.assertTrue((self.task.directory / "docs/uxspec.md").is_file())
+        snapshot = await self.decide(action="approve")
+        self.assertEqual(self.gate(snapshot), "techspec")
+        self.assertIn("uxspec", self.packet_context("techspec-draft-1", "codex"))  # techspec builds on the UX spec
+        snapshot = await self.decide(action="approve")
+        self.assertEqual(self.gate(snapshot), "release")
+        reviews = {(c["job"], c["stage"]) for c in self.calls() if c["job"].startswith("code-review-")}
+        self.assertEqual(reviews, {("code-review-code-reviewer-1", "code-review"),
+                                   ("code-review-ui-reviewer-1", "ui-review")})
+        with self.assertRaisesRegex(ValueError, "Unknown kind"):
+            await flow_task.create(self.root, demo=True, kind="video")
 
     async def test_list_shows_each_task_and_what_it_waits_for(self):
         await self.start()

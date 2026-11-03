@@ -25,6 +25,9 @@ def arguments(argv=None):
     start.add_argument("--repo", help="Target git repository; agents work in a new worktree")
     start.add_argument("--base", default="HEAD", help="Base ref for branch flow/<task-id> (default: HEAD)")
     start.add_argument("--test", help="Test command the supervisor runs in the worktree, e.g. 'go test ./...'")
+    start.add_argument("--kind", default="code",
+                       help="Kind of work from config/flow.json kinds: code (features, bugs), design (UI/UX), "
+                            "docs, content (default: code)")
     start.add_argument("--risk", choices=RISKS, help="Risk floor; triage may raise it, never lower it")
     start.add_argument("--brief", help="Research brief with Source <ID> sections; research runs before the PRD")
     start.add_argument("--research-skill", action="append", default=[], help="Installed skill for researchers")
@@ -109,7 +112,8 @@ async def list_tasks(root):
         finally:
             task.close()
         title = next((line.strip().lstrip("#").strip() for line in task.request.splitlines() if line.strip()), "")
-        rows.append(f"{task.id}  {snapshot.values.get('risk') or task.settings['risk'] or '?':<2}  "
+        rows.append(f"{task.id}  {task.settings.get('kind', 'code'):<7}  "
+                    f"{snapshot.values.get('risk') or task.settings['risk'] or '?':<2}  "
                     f"{state_text(snapshot):<26}  {title[:70]}")
     print("\n".join(rows) or "no tasks")
     return 0
@@ -126,12 +130,13 @@ async def run(args):
         directory = await flow_task.create(
             root, request_path=args.request, repo=args.repo, base=args.base, test_command=args.test,
             risk=args.risk, brief=args.brief, max_calls=args.max_calls, timeout=args.timeout, demo=args.demo,
-            research_skills=args.research_skill, rule_paths=args.rules, skill_names=args.skill)
+            research_skills=args.research_skill, rule_paths=args.rules, skill_names=args.skill, kind=args.kind)
         print(directory, flush=True)
     else:
         directory = task_dir(root, args.task)
     task = flow_task.load(root, directory)
     if args.command == "start":
+        print(f"kind: {task.settings['kind']}")
         print("rules: " + (", ".join(rule["source"] for rule in task.rules) or "none"))
         print("task skills: " + (", ".join(f"{s['name']} ({s['source']})" for s in task.settings["skills"]) or "none"))
         if task.settings["skill_scripts"]:

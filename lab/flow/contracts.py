@@ -38,6 +38,15 @@ TECHSPEC = obj({"summary": TEXT, "approach": TEXT,
                                         "level": enum("unit", "integration", "e2e", "manual"), "description": TEXT})),
                 "tasks": array(obj({"id": TEXT, "title": TEXT, "description": TEXT, "files": array(TEXT)})),
                 "rollout": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
+UX_STATES = ("loading", "empty", "error", "permission", "success", "partial")
+UXSPEC = obj({"summary": TEXT, "users": array(TEXT),
+              "journeys": array(obj({"id": TEXT, "goal": TEXT, "steps": array(TEXT), "covers": array(TEXT)})),
+              "states": array(obj({"id": TEXT, "where": TEXT, "state": enum(*UX_STATES), "behaviour": TEXT})),
+              "components": array(obj({"name": TEXT, "reuse": TEXT})),
+              "copy": array(obj({"key": TEXT, "text": TEXT})),
+              "accessibility": array(TEXT), "responsive": array(TEXT),
+              "decisions": array(obj({"question": TEXT, "options": array(TEXT), "choice": TEXT, "reason": TEXT})),
+              "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
 DOC_REVIEW = obj({"summary": TEXT, "findings": array(obj({
     "id": TEXT, "target": TEXT, "severity": enum(*SEVERITIES), "reason": TEXT, "suggestion": TEXT})),
     "limitations": array(TEXT)})
@@ -50,14 +59,17 @@ IMPLEMENT = obj({"summary": TEXT, "changes": array(obj({"file": TEXT, "descripti
 CODE_REVIEW = obj({"summary": TEXT, "findings": array(obj({
     "id": TEXT, "severity": enum(*SEVERITIES),
     "kind": enum("correctness", "security", "payment-invariant", "data-integrity", "test-gap",
-                 "spec-mismatch", "rule-violation", "maintainability", "other"),
+                 "spec-mismatch", "rule-violation", "maintainability", "accuracy", "clarity", "voice",
+                 "unsupported-claim", "usability", "accessibility", "other"),
     "file": TEXT, "line": INT, "reason": TEXT, "suggestion": TEXT})),
     "acceptance": array(obj({"id": TEXT, "status": enum("met", "not_met", "unverified"), "reason": TEXT})),
     "limitations": array(TEXT)})
-SCHEMAS = {"triage": TRIAGE, "prd": PRD, "techspec": TECHSPEC, "doc-review": DOC_REVIEW,
+SCHEMAS = {"triage": TRIAGE, "prd": PRD, "techspec": TECHSPEC, "uxspec": UXSPEC, "doc-review": DOC_REVIEW,
            "implement": IMPLEMENT, "code-review": CODE_REVIEW}
 
 PRD_SECTIONS = ["overall", "problem", "goals", "non_goals", "users", "risks", "open_questions"]
+UXSPEC_SECTIONS = ["overall", "users", "components", "copy", "accessibility", "responsive", "decisions",
+                   "open_questions"]
 TECHSPEC_SECTIONS = ["overall", "approach", "components", "data_changes", "api_changes", "invariants",
                      "failure_modes", "test_plan", "tasks", "rollout", "open_questions"]
 
@@ -101,6 +113,10 @@ def prd_targets(prd):
 
 def techspec_targets(spec):
     return [*TECHSPEC_SECTIONS, *[t["id"] for t in spec["test_plan"]], *[t["id"] for t in spec["tasks"]]]
+
+
+def uxspec_targets(spec):
+    return [*UXSPEC_SECTIONS, *[j["id"] for j in spec["journeys"]], *[s["id"] for s in spec["states"]]]
 
 
 def acceptance_ids(prd):
@@ -165,6 +181,43 @@ def techspec_lint(spec, prd):
     if not spec["tasks"]:
         findings.append({"id": "S-tasks", "target": "tasks", "severity": "major",
                          "reason": "Techspec chưa chia task triển khai.", "suggestion": "Liệt kê task và file dự kiến."})
+    return findings
+
+
+def validate_uxspec(spec, prd, required):
+    nonblank(spec["summary"])
+    if not spec["journeys"]:
+        raise ValueError("UX spec needs at least one journey")
+    journey_ids = ids(spec["journeys"], "journey")
+    state_ids = ids(spec["states"], "state")
+    if set(journey_ids) & set(state_ids) or set(journey_ids + state_ids) & set(UXSPEC_SECTIONS):
+        raise ValueError("Journey, state and section IDs must be distinct")
+    known = set(acceptance_ids(prd))
+    for journey in spec["journeys"]:
+        nonblank(journey["goal"])
+        if not journey["steps"]:
+            raise ValueError(f"Journey {journey['id']} has no steps")
+        if known and not set(journey["covers"]) <= known:
+            raise ValueError(f"Journey {journey['id']} covers an unknown acceptance criterion")
+    for state in spec["states"]:
+        nonblank(state["behaviour"])
+    check_resolutions(spec["resolutions"], required)
+
+
+def uxspec_lint(spec, prd):
+    covered = {ac for journey in spec["journeys"] for ac in journey["covers"]}
+    findings = [{"id": f"S-{ac}", "target": "overall", "severity": "major",
+                 "reason": f"Acceptance criterion {ac} chưa có hành trình người dùng nào bao phủ.",
+                 "suggestion": "Thêm hoặc mở rộng một journey cho criterion này."}
+                for ac in acceptance_ids(prd) if ac not in covered]
+    if "error" not in {s["state"] for s in spec["states"]}:
+        findings.append({"id": "S-error", "target": "overall", "severity": "major",
+                         "reason": "Đặc tả chưa mô tả trạng thái lỗi.",
+                         "suggestion": "Mô tả điều người dùng thấy và làm được khi thao tác thất bại."})
+    if not spec["accessibility"]:
+        findings.append({"id": "S-a11y", "target": "accessibility", "severity": "major",
+                         "reason": "Đặc tả chưa có yêu cầu accessibility.",
+                         "suggestion": "Nêu cách dùng bằng bàn phím, nhãn cho trình đọc màn hình và độ tương phản."})
     return findings
 
 

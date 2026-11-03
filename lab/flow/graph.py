@@ -1,5 +1,8 @@
-"""Work flow: triage -> (research) -> PRD <-> review -> techspec <-> review
--> implement -> tests -> code review <-> fix -> release gate -> finalize.
+"""Work flow: triage -> (research) -> documents <-> review -> implement -> tests
+-> review <-> fix -> release gate -> finalize.
+
+The task's kind picks the documents (code: PRD, techspec; design: PRD, UX spec,
+techspec; docs and content: none), the writing protocol and the roles.
 
 Invariants:
 - Job IDs and packets are pure functions of graph state, so a node that LangGraph
@@ -25,12 +28,14 @@ from .. import pipeline, runtime as lab_runtime
 from ..jobs import gather_all
 from ..state import State, now
 from . import contracts as c, render, workspace
-from .config import binding, persona_cfg
+from .config import DOC_STAGES, binding, kind_config, persona_cfg, role
 
 FAILED_TESTS = {"failed", "timeout", "error"}
 
 
 class FlowState(TypedDict, total=False):
+    kind: str
+    sequence: list
     risk: str
     gates: list
     docs: bool
@@ -47,6 +52,11 @@ class FlowState(TypedDict, total=False):
     techspec_lint: list
     techspec_findings: list
     techspec_reviews: dict
+    uxspec: dict
+    uxspec_round: int
+    uxspec_lint: list
+    uxspec_findings: list
+    uxspec_reviews: dict
     impl_round: int
     implementation: dict
     impl_lint: list
@@ -116,15 +126,24 @@ def blocked(task, node, start):
             "status": "blocked"}
 
 
+def kind_of(task):
+    return task.settings.get("kind", "code")
+
+
+def role_for(task, state, key, by_risk=False):
+    return role(task.flow, kind_of(task), key, state["risk"] if by_risk else None)
+
+
 def risk_update(task, risk):
     if risk not in c.RISKS:
         raise ValueError(f"Unknown risk tier: {risk}")
-    return {"risk": risk, "gates": task.flow["gates"][risk], "docs": task.flow["docs"][risk]}
+    gates = list(dict.fromkeys([*task.flow["gates"][risk], *kind_config(task.flow, kind_of(task))["gates"]]))
+    return {"risk": risk, "gates": gates, "docs": task.flow["docs"][risk]}
 
 
 def guidance(state):
     return [d["note"] for d in state.get("decisions", [])
-            if d["action"] == "approve" and d.get("note") and d["gate"] in {"prd", "techspec", "release"}]
+            if d["action"] == "approve" and d.get("note") and d["gate"] in {*DOC_STAGES, "release"}]
 
 
 def human_findings(state, stage):
@@ -145,7 +164,13 @@ def write(task, relative, text):
 
 
 def docs_entry(state):
-    return "prd_draft" if state["docs"] else "implement"
+    return f"{state['sequence'][0]}_draft" if state["docs"] and state["sequence"] else "implement"
+
+
+def next_stage(state, doc):
+    sequence = state["sequence"]
+    position = sequence.index(doc) + 1
+    return f"{sequence[position]}_draft" if position < len(sequence) else "implement"
 
 
 # ---------------------------------------------------------------- triage / research
@@ -153,7 +178,7 @@ def docs_entry(state):
 async def triage(state, runtime: Runtime[FlowContext]):
     task = runtime.context.task
     start = len(task.runner.blockers)
-    out = await call(task, state, job_id="triage", protocol="triage", ref=task.flow["roles"]["triage"],
+    out = await call(task, state, job_id="triage", protocol="triage", ref=role(task.flow, kind_of(task), "triage"),
                      context={"operator_risk": task.settings["risk"], "default_risk": task.flow["default_risk"],
                               "research_brief_supplied": bool(state.get("research_brief"))},
                      schema=c.TRIAGE, validate=c.validate_triage)
@@ -163,7 +188,8 @@ async def triage(state, runtime: Runtime[FlowContext]):
     risk = c.most_severe(task.settings["risk"] or task.flow["default_risk"], out["risk"])
     rounds = task.flow["max_doc_rounds"]
     return {"triage": out, **risk_update(task, risk), "blocked": None, "status": "running",
-            "limits": {"prd": rounds, "techspec": rounds, "implement": task.flow["max_fix_rounds"] + 1}}
+            "kind": kind_of(task), "sequence": kind_config(task.flow, kind_of(task))["docs"],
+            "limits": {**{doc: rounds for doc in DOC_STAGES}, "implement": task.flow["max_fix_rounds"] + 1}}
 
 
 def route_triage(state):
@@ -242,22 +268,27 @@ def route_research(state):
 # ---------------------------------------------------------------- PRD and techspec
 
 DOCS = {
-    "prd": {"schema": c.PRD, "targets": c.prd_targets, "render": render.prd_md, "title": "PRD",
+    "prd": {"schema": c.PRD, "targets": c.prd_targets, "render": render.prd_md, "title": "PRD", "covers": None,
             "validate": lambda out, state, required: c.validate_prd(out, required),
             "lint": lambda out, state: c.prd_lint(out)},
+    "uxspec": {"schema": c.UXSPEC, "targets": c.uxspec_targets, "render": render.uxspec_md, "title": "Đặc tả UX",
+               "covers": ("journeys", "[]", "covers", "[]"),
+               "validate": lambda out, state, required: c.validate_uxspec(out, state["prd"], required),
+               "lint": lambda out, state: c.uxspec_lint(out, state["prd"])},
     "techspec": {"schema": c.TECHSPEC, "targets": c.techspec_targets, "render": render.techspec_md,
-                 "title": "Techspec",
+                 "title": "Techspec", "covers": ("test_plan", "[]", "covers", "[]"),
                  "validate": lambda out, state, required: c.validate_techspec(out, state["prd"], required),
                  "lint": lambda out, state: c.techspec_lint(out, state["prd"])},
 }
-NEXT = {"prd": "techspec_draft", "techspec": "implement"}
+assert tuple(DOCS) == DOC_STAGES
 
 
 def doc_context(state, doc):
+    """Each document sees the ones written before it (techspec reads the PRD and, for design, the UX spec)."""
     context = {"risk": state["risk"], "triage": state["triage"], "research": state.get("research"),
                "human_guidance": guidance(state)}
-    if doc == "techspec":
-        context["prd"] = state["prd"]
+    for earlier in state["sequence"][:state["sequence"].index(doc)]:
+        context[earlier] = state[earlier]
     return context
 
 
@@ -272,13 +303,13 @@ def draft_node(doc):
         required = c.blocking(previous) + human_findings(state, doc)
         required_ids = [f["id"] for f in required]
         schema = c.restrict(spec["schema"], ("resolutions", "[]", "finding_id"), required_ids)
-        if doc == "techspec":
-            schema = c.restrict(schema, ("test_plan", "[]", "covers", "[]"), c.acceptance_ids(state["prd"]))
+        if spec["covers"]:
+            schema = c.restrict(schema, spec["covers"], c.acceptance_ids(state["prd"]))
         context = {**doc_context(state, doc), "round": round_, "previous": state.get(doc),
                    "findings_to_resolve": required,
                    "other_findings": [f for f in previous if f["severity"] not in c.BLOCKING]}
         out = await call(task, state, job_id=f"{doc}-draft-{round_}", protocol=doc,
-                         ref=task.flow["roles"][doc]["author"], context=context, schema=schema,
+                         ref=role_for(task, state, doc)["author"], context=context, schema=schema,
                          validate=lambda o: spec["validate"](o, state, required_ids))
         if out is None:
             return blocked(task, f"{doc}_draft", start)
@@ -299,7 +330,7 @@ def review_node(doc):
         round_ = state[f"{doc}_round"]
         targets = spec["targets"](state[doc])
         schema = c.restrict(c.DOC_REVIEW, ("findings", "[]", "target"), targets)
-        refs = task.flow["roles"][doc]["reviewers"]
+        refs = role_for(task, state, doc)["reviewers"]
         reviewers = [binding(ref)[0] for ref in refs]
         context = {**doc_context(state, doc), "round": round_, doc: state[doc], "targets": targets,
                    "supervisor_findings": state[f"{doc}_lint"],
@@ -332,7 +363,7 @@ def review_router(doc):
         if unresolved and state[f"{doc}_round"] < state["limits"][doc]:
             return f"{doc}_draft"
         # Rounds exhausted with blocker/major findings: escalate even if the tier has no gate here.
-        return f"{doc}_gate" if unresolved or doc in state["gates"] else NEXT[doc]
+        return f"{doc}_gate" if unresolved or doc in state["gates"] else next_stage(state, doc)
     return route
 
 
@@ -352,7 +383,7 @@ def gate_node(doc):
         if action == "revise":
             return Command(goto=f"{doc}_draft", update=revise_update(state, update, doc, doc, note, round_,
                                                                       task.flow["max_doc_rounds"]))
-        return Command(goto=NEXT[doc], update=update)
+        return Command(goto=next_stage(state, doc), update=update)
     return node
 
 
@@ -394,11 +425,12 @@ async def implement(state, runtime: Runtime[FlowContext]):
                                 "suggestion": "Sửa để toàn bộ test đạt; xem tests.tail trong context."}]
     required += human_findings(state, "code")
     required_ids = [f["id"] for f in required]
-    ref = task.flow["roles"]["implement"][state["risk"]]
+    ref = role_for(task, state, "implement", by_risk=True)
     persona_id, override = binding(ref)
     persona = task.personas[persona_id]
-    context = {"risk": state["risk"], "triage": state["triage"], "prd": state.get("prd"),
-               "techspec": state.get("techspec"), "research": state.get("research"), "round": round_,
+    context = {"kind": kind_of(task), "risk": state["risk"], "triage": state["triage"], "prd": state.get("prd"),
+               "uxspec": state.get("uxspec"), "techspec": state.get("techspec"), "research": state.get("research"),
+               "round": round_,
                "findings_to_resolve": required, "other_findings": [f for f in previous if f["severity"] == "minor"],
                "tests": {k: tests.get(k) for k in ("status", "exit_code", "command", "tail")} if tests else None,
                "test_command": task.settings["test_command"], "human_guidance": guidance(state)}
@@ -408,7 +440,8 @@ async def implement(state, runtime: Runtime[FlowContext]):
             workspace.archive_and_reset(task.worktree, task.directory / "attempts" /
                                         f"implement-{round_}-dirty-{uuid4().hex[:8]}.patch")
 
-    out = await call(task, state, job_id=f"implement-{round_}", protocol="implement", ref=ref,
+    out = await call(task, state, job_id=f"implement-{round_}",
+                     protocol=kind_config(task.flow, kind_of(task))["implement_protocol"], ref=ref,
                      context=context, access="write", before_start=before_start,
                      schema=c.restrict(c.IMPLEMENT, ("resolutions", "[]", "finding_id"), required_ids),
                      validate=lambda o: c.validate_implement(o, required_ids))
@@ -470,9 +503,10 @@ async def code_review(state, runtime: Runtime[FlowContext]):
     files = workspace.known_files(task.worktree, base, tip)
     criteria = c.acceptance_ids(state.get("prd"))
     tests = state["tests"]
-    refs = task.flow["roles"]["code_review"][state["risk"]]
+    refs = role_for(task, state, "code_review", by_risk=True)
     reviewers = [binding(ref)[0] for ref in refs]
-    context = {"risk": state["risk"], "prd": state.get("prd"), "techspec": state.get("techspec"), "round": round_,
+    context = {"kind": kind_of(task), "risk": state["risk"], "prd": state.get("prd"), "uxspec": state.get("uxspec"),
+               "techspec": state.get("techspec"), "round": round_,
                "diff": diff, "diff_truncated": truncated,
                "tests": {k: tests.get(k) for k in ("status", "exit_code", "command", "tail")},
                "implementation_claims": {k: impl[k] for k in ("summary", "changes", "tests", "commands_run",
@@ -562,15 +596,15 @@ async def finalize(state, runtime: Runtime[FlowContext]):
 
 def build_graph():
     graph = StateGraph(FlowState, context_schema=FlowContext)
-    work = ["triage", "research", "prd_draft", "prd_review", "techspec_draft", "techspec_review",
-            "implement", "code_review"]
+    drafts = [f"{doc}_draft" for doc in DOCS]
+    work = ["triage", "research", *drafts, *[f"{doc}_review" for doc in DOCS], "implement", "code_review"]
     graph.add_node("triage", triage)
-    graph.add_node("research_gate", research_gate, destinations=("research", "prd_draft", "implement", "finalize"))
+    graph.add_node("research_gate", research_gate, destinations=("research", *drafts, "implement", "finalize"))
     graph.add_node("research", research)
     for doc in DOCS:
         graph.add_node(f"{doc}_draft", draft_node(doc))
         graph.add_node(f"{doc}_review", review_node(doc))
-        graph.add_node(f"{doc}_gate", gate_node(doc), destinations=(NEXT[doc], f"{doc}_draft", "finalize"))
+        graph.add_node(f"{doc}_gate", gate_node(doc), destinations=(*drafts, "implement", "finalize"))
     graph.add_node("implement", implement)
     graph.add_node("run_tests", run_tests)
     graph.add_node("code_review", code_review)
@@ -580,12 +614,12 @@ def build_graph():
 
     graph.add_edge(START, "triage")
     graph.add_conditional_edges("triage", route_triage,
-                                ["blocked_gate", "research", "research_gate", "prd_draft", "implement"])
-    graph.add_conditional_edges("research", route_research, ["blocked_gate", "prd_draft", "implement"])
+                                ["blocked_gate", "research", "research_gate", *drafts, "implement"])
+    graph.add_conditional_edges("research", route_research, ["blocked_gate", *drafts, "implement"])
     for doc in DOCS:
         graph.add_conditional_edges(f"{doc}_draft", draft_router(doc), ["blocked_gate", f"{doc}_review"])
         graph.add_conditional_edges(f"{doc}_review", review_router(doc),
-                                    ["blocked_gate", f"{doc}_draft", f"{doc}_gate", NEXT[doc]])
+                                    ["blocked_gate", *drafts, f"{doc}_gate", "implement"])
     graph.add_conditional_edges("implement", route_implement, ["blocked_gate", "run_tests"])
     graph.add_edge("run_tests", "code_review")
     graph.add_conditional_edges("code_review", route_code_review, ["blocked_gate", "implement", "release_gate"])

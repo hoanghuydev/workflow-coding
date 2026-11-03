@@ -39,6 +39,27 @@ def techspec_md(spec, round_):
     return "\n".join(lines + resolution_lines(spec["resolutions"]))
 
 
+def uxspec_md(spec, round_):
+    lines = ["# Đặc tả UX", "", f"Bản nháp vòng {round_}.", "", spec["summary"], "", "## Người dùng", "",
+             *bullets(spec["users"]), "", "## Hành trình", ""]
+    for journey in spec["journeys"]:
+        covers = f" (bao phủ {', '.join(journey['covers'])})" if journey["covers"] else ""
+        lines += [f"### {journey['id']}: {journey['goal']}{covers}", "",
+                  *[f"{n}. {step}" for n, step in enumerate(journey["steps"], 1)], ""]
+    lines += ["## Trạng thái", "", "| ID | Ở đâu | Trạng thái | Hành vi |", "| --- | --- | --- | --- |"]
+    lines += [f"| {s['id']} | {s['where']} | {s['state']} | {s['behaviour']} |" for s in spec["states"]]
+    lines += ["", "## Thành phần", ""]
+    lines += [f"- **{c['name']}**: {c['reuse']}" for c in spec["components"]] or ["- Không có."]
+    lines += ["", "## Nội dung chữ", ""]
+    lines += [f"- `{c['key']}`: {c['text']}" for c in spec["copy"]] or ["- Không có."]
+    lines += ["", "## Accessibility", "", *bullets(spec["accessibility"]), "", "## Màn hình hẹp", "",
+              *bullets(spec["responsive"]), "", "## Quyết định thiết kế", ""]
+    lines += [f"- **{d['question']}** Chọn: {d['choice']} (các phương án: {', '.join(d['options'])}). {d['reason']}"
+              for d in spec["decisions"]] or ["- Không có."]
+    lines += ["", "## Câu hỏi mở", "", *bullets(spec["open_questions"]), ""]
+    return "\n".join(lines + resolution_lines(spec["resolutions"]))
+
+
 def resolution_lines(resolutions):
     if not resolutions:
         return []
@@ -58,7 +79,8 @@ def finding_lines(findings):
 
 
 def gate_md(kind, task_id, state, extra):
-    titles = {"research": "Cần nguồn cho research", "prd": "Duyệt PRD", "techspec": "Duyệt techspec",
+    titles = {"research": "Cần nguồn cho research", "prd": "Duyệt PRD", "uxspec": "Duyệt đặc tả UX",
+              "techspec": "Duyệt techspec",
               "release": "Duyệt bàn giao code", "blocked": "Flow bị chặn"}
     risk = state.get("risk", "?")
     lines = [f"# {titles[kind]} — {task_id}", "", f"Rủi ro hiện tại: **{risk}**.", ""]
@@ -124,6 +146,8 @@ def report_md(task_id, state, calls, max_calls):
         lines.append(f"- Research: {state['research'].get('status')} ({state['research'].get('dir', '-')})")
     if state.get("prd"):
         lines.append("- [PRD](docs/prd.md)")
+    if state.get("uxspec"):
+        lines.append("- [Đặc tả UX](docs/uxspec.md)")
     if state.get("techspec"):
         lines.append("- [Techspec](docs/techspec.md)")
     if state.get("implementation"):

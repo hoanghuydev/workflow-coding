@@ -52,10 +52,19 @@ and commit or push only when asked.
 
 1. Find out, asking only for what you cannot look up:
    - **What to build**, in the user's words.
+   - **Kind** (`--kind`), which picks the stages and personas; the user never names a
+     persona. `code` for features and bug fixes (the default), `design` when the work
+     is mostly UI/UX, `docs` for documentation and API references, `content` for
+     homepage or marketing copy. Tell the user which kind you chose and why.
+   - **Bug fixes.** Use kind `code`. Write the observed behaviour, the expected
+     behaviour and the reproduction steps into the request, and suggest
+     `--skill change-verification`.
    - **Target repo** (`--repo`) and **base branch** (`--base`, usually `main`).
    - **Test command** (`--test`). Look in the target repo (Makefile, package.json,
      go.mod, CI config) and propose one. Tests run by the supervisor are the only test
      evidence the flow trusts. Without `--test` the release gate shows tests as not run.
+     For `docs` or `content`, propose a command that checks the result: a docs or site
+     build, a link check, an OpenAPI validation.
    - **Risk floor** (`--risk`). Propose one; triage can raise it but never lower it.
      P0: money, idempotency, authorization, merchant isolation. P1: deploy, migration,
      integrations (the default). P2: lists, filters, dashboards. P3: demos and
@@ -73,7 +82,7 @@ and commit or push only when asked.
 3. Start the task:
 
    ```bash
-   .venv/bin/python run_flow.py start --request requests/<file>.md \
+   .venv/bin/python run_flow.py start --request requests/<file>.md --kind code \
      --repo <path> --base main --test "<command>" --risk P2
    ```
 
@@ -83,7 +92,7 @@ and commit or push only when asked.
 
 `start` prints the `rules:`, `task skills:` and `skill scripts` it sealed into the task.
 Tell the user which ones apply. If they mention conventions that no rule covers,
-suggest adding them before starting. See README "Rule và skill" for where each kind
+suggest adding them before starting. See README "Rule và skill" for where each one
 lives. Rules are binding; skills are guidance and rank below rules. Project rules and
 skills are read from the base commit, so they must be committed first. Workers never
 see the user's `~/.claude` or `~/.codex` files.
@@ -122,6 +131,7 @@ Read the gate file first; it links the rest. Then read what the gate is about:
 | --- | --- |
 | `research` | triage's open questions, in the gate file |
 | `prd` | `tasks/<id>/docs/prd.md` |
+| `uxspec` | `tasks/<id>/docs/uxspec.md` (kind `design`), plus `prd.md` if the user has not seen it |
 | `techspec` | `tasks/<id>/docs/techspec.md`, plus `prd.md` if the user has not seen it |
 | `release` | the newest `tasks/<id>/tests/round-N.log` (its tail), and the diff: `git -C tasks/<id>/worktree diff <base_sha> HEAD` (`base_sha` is in `tasks/<id>/task.json`) |
 | `blocked` | `manifest.json` and `stderr.log` of the failed job under `tasks/<id>/jobs/` |

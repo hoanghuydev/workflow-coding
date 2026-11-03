@@ -6,6 +6,8 @@ Every must requirement needs at least one acceptance criterion (AC1, ...) in
 Given/When/Then form that a test or a person can check without interpretation.
 State non-goals explicitly so the scope stays as small as the request allows.
 Read the repository only to understand current behaviour and vocabulary.
+For a defect report, state the observed and the expected behaviour, and make the
+reproduction an acceptance criterion that fails today.
 
 Do not invent business rules, limits, fees or policies; put each unknown in
 open_questions. Use research claims only with their stated status: verified,

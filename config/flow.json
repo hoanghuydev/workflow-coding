@@ -60,6 +60,74 @@
       ]
     }
   },
+  "kinds": {
+    "code": {},
+    "design": {
+      "docs": [
+        "prd",
+        "uxspec",
+        "techspec"
+      ],
+      "gates": [
+        "uxspec"
+      ],
+      "roles": {
+        "uxspec": {
+          "author": "ux-designer",
+          "reviewers": [
+            "ui-reviewer"
+          ]
+        },
+        "code_review": {
+          "P0": [
+            {
+              "persona": "code-reviewer",
+              "model": "claude-opus-5-5"
+            },
+            "critical-invariants-reviewer",
+            "ui-reviewer",
+            "adversarial-qa"
+          ],
+          "P1": [
+            {
+              "persona": "code-reviewer",
+              "model": "claude-opus-5-5"
+            },
+            "ui-reviewer",
+            "adversarial-qa"
+          ],
+          "P2": [
+            "code-reviewer",
+            "ui-reviewer"
+          ],
+          "P3": [
+            "code-reviewer",
+            "ui-reviewer"
+          ]
+        }
+      }
+    },
+    "docs": {
+      "docs": [],
+      "implement_protocol": "write-docs",
+      "roles": {
+        "implement": "technical-writer",
+        "code_review": [
+          "docs-verifier"
+        ]
+      }
+    },
+    "content": {
+      "docs": [],
+      "implement_protocol": "write-content",
+      "roles": {
+        "implement": "copywriter",
+        "code_review": [
+          "content-editor"
+        ]
+      }
+    }
+  },
   "gates": {
     "P0": [
       "prd",

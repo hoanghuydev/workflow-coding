@@ -47,7 +47,21 @@ def flow_report(stage, context, behavior):
                 "test_plan": [{"id": "T1", "covers": criteria, "level": "unit", "description": "test_fees.py"}],
                 "tasks": [{"id": "K1", "title": "Viết transfer_fee", "description": "Theo PRD.", "files": ["fees.py"]}],
                 "rollout": [], "open_questions": [], "resolutions": resolutions}
-    if stage in {"prd-review", "techspec-review"}:
+    if stage == "uxspec":
+        return {"summary": "Synthetic UX spec.", "users": ["Merchant"],
+                "journeys": [{"id": "J1", "goal": "Xem phí", "steps": ["Nhập số tiền", "Xem phí"], "covers": criteria}],
+                "states": [{"id": "S1", "where": "Ô số tiền", "state": "error", "behaviour": "Báo số tiền âm"}],
+                "components": [{"name": "Ô nhập", "reuse": "Dùng ô nhập có sẵn"}],
+                "copy": [{"key": "error.negative", "text": "Số tiền phải lớn hơn 0"}],
+                "accessibility": ["Ô nhập có nhãn"], "responsive": ["Một cột trên màn hình hẹp"],
+                "decisions": [], "open_questions": [], "resolutions": resolutions}
+    if stage in {"write-docs", "write-content"}:
+        target = Path("docs/fees.md" if stage == "write-docs" else "content/home.md")
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("# Phí chuyển khoản\n\nPhí 1,1%, làm tròn lên.\n")
+        return {"summary": f"Synthetic {stage}.", "changes": [{"file": str(target), "description": "Synthetic."}],
+                "tests": [], "commands_run": [], "resolutions": resolutions, "open_questions": []}
+    if stage in {"prd-review", "uxspec-review", "techspec-review"}:
         findings = [{"id": "F1", "target": "overall", "severity": "major", "reason": "Synthetic objection.",
                      "suggestion": "Synthetic fix."}] if behavior == "blocking" else []
         return {"summary": "Synthetic document review.", "findings": findings, "limitations": []}
@@ -64,7 +78,7 @@ def flow_report(stage, context, behavior):
         return {"summary": "Synthetic implementation.", "changes": changes, "tests": tests,
                 "commands_run": [{"command": "python -m unittest", "exit_code": 0, "note": "synthetic claim"}],
                 "resolutions": resolutions, "open_questions": []}
-    if stage in {"code-review", "qa"}:
+    if stage in {"code-review", "qa", "docs-review", "content-review", "ui-review"}:
         findings = [{"id": "F1", "severity": "major", "kind": "correctness", "file": "fees.py", "line": 1,
                      "reason": "Synthetic objection.", "suggestion": "Synthetic fix."}] if behavior == "blocking" else []
         return {"summary": "Synthetic code review.", "findings": findings, "limitations": [],
