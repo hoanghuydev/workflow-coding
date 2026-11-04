@@ -9,3 +9,6 @@
   `~/.claude`), ask the user before rerunning outside the sandbox.
 - Ask for a gate decision in plain text. A permission prompt for an `approve`
   command is not a gate decision.
+- Before changing a tracked file here, ask the direct-or-flow question from
+  AGENTS.md "Changing this repo" in plain text. Approving an Edit or Write
+  permission prompt is not that answer.

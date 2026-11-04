@@ -13,17 +13,18 @@ root with `.venv/bin/python`.
 
 ## Which repo a request changes
 
-**You edit only this repo directly. Any other repo changes only through a flow task.**
+**Any other repo changes only through a flow task. This repo changes directly or
+through a flow task, and the user picks which (see "Changing this repo").**
 
 | The user wants to change | Lives in | What you do |
 | --- | --- | --- |
 | Code of another project | that project's repo | Start a flow task (see "Starting a task"). Never edit that repo yourself, even for a one-line fix. For a quick direct edit, the user opens an assistant in that repo |
 | That project's rules or skills (`AGENTS.md`, `CLAUDE.md`, `.agents/skills/`, `.claude/skills/`) | that project's repo | Tell the user these files live there and must be committed before `start`. Edit them only if the user explicitly asks; show the diff and leave the commit to them |
-| Rules for every project | `rules/*.md` here | Edit here |
-| Who does what, gates, limits, personas, models | `config/flow.json`, `config/personas.json` here | Edit here |
-| How a stage works | `protocols/flow/*.md` here | Edit here |
-| General skills | `.agents/skills/` and `config/skills.lock.json` here | Edit here; see `docs/research.md` "Skills" |
-| The flow's code or docs | `lab/`, `run_*.py`, `docs/`, `README.md` here | Edit here; see "Developing the lab" |
+| Rules for every project | `rules/*.md` here | Change here |
+| Who does what, gates, limits, personas, models | `config/flow.json`, `config/personas.json` here | Change here |
+| How a stage works | `protocols/flow/*.md` here | Change here |
+| General skills | `.agents/skills/` and `config/skills.lock.json` here | Change here; see `docs/research.md` "Skills" |
+| The flow's code or docs | `lab/`, `run_*.py`, `docs/`, `README.md` here | Change here; see "Developing the lab" |
 
 If the scope is unclear, ask one question instead of guessing. For example, for "add a
 rule: no float for money", ask whether it applies to every project or to one.
@@ -32,6 +33,30 @@ Changes here apply only to tasks created afterwards, because each task seals its
 inputs. A running task keeps the old version; to use the new one, reject it and start
 again. Once pushed, changes here reach the whole team: show the diff, run the tests,
 and commit or push only when asked.
+
+### Changing this repo
+
+Before you change a tracked file in this repo, ask the user whether to edit it
+directly or run the change as a flow task, unless they already said which for this
+request. Put the trade-off in the question:
+
+- **Direct:** you edit, run the tests and show the diff. Quick and costs no model
+  calls, but no independent model reviews the change.
+- **Flow task:** a worker writes the change on branch `flow/<id>` and a reviewer on
+  another CLI checks it before a release gate. It costs model calls (give your
+  estimate), and the user reviews and merges the branch.
+
+The question does not cover untracked files: what the operating steps write
+(`requests/`, briefs) and local config (`config/agents.local.json`,
+`.claude/settings.json`). The flow cannot change those.
+
+If the user picks the flow, follow "Starting a task" with `--repo` set to this repo.
+Use kind `docs` for `README.md` and `docs/` (`content` when the goal is persuasive
+copy) and `code` for the rest. Tests run inside the worktree, which has no `.venv`,
+so pass the absolute interpreter path:
+`--test "<this repo>/.venv/bin/python -m unittest discover -s tests"`. Workers get
+this file and `CLAUDE.md` as project rules, about 14 KB per call; the first line
+tells them to ignore it.
 
 ## Rules for operating
 
@@ -132,7 +157,7 @@ and commit or push only when asked.
 
 `start` prints the `rules:`, `task skills:` and `skill scripts` it sealed into the task.
 Tell the user which ones apply. If they mention conventions that no rule covers,
-suggest adding them before starting. See README "Rule và skill" for where each one
+suggest adding them before starting. See README "Rules and skills" for where each one
 lives. Rules are binding; skills are guidance and rank below rules. Project rules and
 skills are read from the base commit, so they must be committed first. Workers never
 see the user's `~/.claude` or `~/.codex` files.
@@ -250,6 +275,6 @@ and a throwaway repo, at no cost. Use it to show a new user how the flow works.
   - Paid calls go through `JobRunner`, with job ids derived from state.
   - Code decides routing; model verdicts do not.
   - Nothing merges or pushes.
-- Prompts, protocols and personas are written in English. README and `docs/` are in
-  Vietnamese.
+- Prompts, protocols and personas are written in English. README is in English;
+  `docs/` is in Vietnamese.
 - Don't commit `config/agents.local.json`, `tasks/`, `runs/` or `requests/`.

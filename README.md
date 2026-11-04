@@ -1,260 +1,370 @@
 # workflow-coding
 
-Điều phối ba AI coding CLI (Codex, Claude Code, Antigravity) làm việc như một đội
-phần mềm nhỏ: nhận yêu cầu, viết PRD, techspec, viết code, chạy test, review chéo,
-rồi dừng chờ người duyệt. Mỗi vai do một persona đảm nhiệm (product manager,
-senior dev, reviewer...). Người viết và người review luôn chạy trên **hai CLI khác
-nhau**. Flow không bao giờ tự merge, push hay deploy.
+**Turn three AI coding CLIs into a small software team that plans, builds, tests and
+cross-reviews your change, then waits for your sign-off.**
+
+You describe the work in plain words. workflow-coding takes it through the steps a
+careful team would follow: triage, a product spec, a technical spec, code, tests and code
+review. Codex, Claude Code and Antigravity each play defined roles, and the AI that
+reviews a piece of work always runs on a different CLI from the AI that wrote it. At every
+decision point the flow stops and asks you. Nothing is merged, pushed or deployed for you.
+
+```text
+You ask:   "Add a status filter to the /transactions page in ~/code/cpay"
+The flow:  triage → PRD → techspec → code → tests → cross-review → waits for you
+You get:   branch flow/<task-id>, the specs behind it, and a report of every decision
+```
+
+## Why workflow-coding
+
+Asking one AI agent to "just build it" works until it doesn't. These are the usual ways
+it goes wrong, and what this project does about each:
+
+| The problem | What workflow-coding does |
+| --- | --- |
+| The agent grades its own homework | Writer and reviewer always run on different CLIs from different vendors. The flow refuses any config that breaks this |
+| "All tests pass" is a sentence the model wrote | The supervisor runs your test command itself after every code round. Only that result counts as test evidence |
+| A typo fix and a payment change get the same process | Every task gets a risk tier, P0 to P3. Higher tiers add specs, approval gates and reviewers |
+| The AI decides when it's done | Code decides the next step from open findings, test results and round limits. A model's verdict never routes the flow |
+| Changes land without a human look | Agents work in a separate git worktree on their own branch. Every task ends at a release gate, and merging stays with you |
+| Long runs burn quota, and a crash burns it twice | Each task has a model call limit. Finished calls are recorded and reused on resume, never paid for again |
+| Nobody remembers why the code looks this way | Each task keeps its PRD, techspec, review findings, your gate decisions and the test logs |
+
+## What you can use it for
+
+- **Features and bug fixes** (`--kind code`, the default). PRD → techspec → code → tests →
+  review. For a bug, the PRD records current and expected behaviour and turns the
+  reproduction steps into a failing acceptance criterion; the techspec has to name the
+  root cause.
+- **UI and UX work** (`--kind design`). Adds a UX spec that always stops for your approval,
+  and a UI reviewer on the code.
+- **Technical docs and API references** (`--kind docs`). A technical writer drafts, a docs
+  verifier checks the result against the code.
+- **Homepage and marketing copy** (`--kind content`). A copywriter drafts, a content editor
+  checks it.
+- **Research questions** (`run_lab.py`). Three AIs research independently over sources you
+  supply, audit each other's claims against those sources, and sort the findings into
+  verified, disputed and inconclusive.
+
+## Meet the team
+
+Fourteen personas, each with its own runtime, model, effort level and instructions in
+`config/personas.json`. You never pick one: the kind of work and the risk tier do.
+
+| Job | Persona | Runs on |
+| --- | --- | --- |
+| Sizes up the request and its risk | triage-lead | Codex |
+| Writes the PRD | product-manager | Codex |
+| Reviews the PRD | requirements-reviewer | Claude Code |
+| Writes the techspec and the code | engineer | Codex |
+| Reviews the techspec | architecture-reviewer | Claude Code |
+| Reviews the code | code-reviewer | Claude Code |
+| Checks money, state and permission invariants (P0) | critical-invariants-reviewer | Claude Code |
+| Hunts for failure cases the tests missed (P0, P1) | adversarial-qa | Antigravity |
+| Specifies the UX (`design`) | ux-designer | Codex |
+| Reviews the UX spec and the UI code (`design`) | ui-reviewer | Claude Code |
+| Writes and checks docs (`docs`) | technical-writer, docs-verifier | Codex, Claude Code |
+| Writes and edits copy (`content`) | copywriter, content-editor | Codex, Claude Code |
+
+Models and effort for each persona: [docs/flow.md](docs/flow.md#danh-sách-persona).
+
+## How it works
 
 ```mermaid
 flowchart LR
-    T[Triage<br/>xếp rủi ro P0–P3] --> R[Research<br/>khi cần]
+    T[Triage<br/>risk P0–P3] --> R[Research<br/>if needed]
     R --> P[PRD ⇄ review]
     T --> P
     P --> S[Techspec ⇄ review]
-    S --> I[Viết code<br/>git worktree riêng]
-    I --> X[Chạy test<br/>supervisor tự chạy]
-    X --> C[Code review ⇄ sửa]
-    C --> G{{Người duyệt<br/>release gate}}
+    S --> I[Code<br/>in its own git worktree]
+    I --> X[Tests<br/>run by the supervisor]
+    X --> C[Code review ⇄ fix]
+    C --> G{{You approve<br/>release gate}}
 ```
 
-Có hai lệnh:
+The risk tier decides how much process a task gets:
 
-| Lệnh | Dùng khi |
-| --- | --- |
-| `run_flow.py` | Làm một việc từ yêu cầu đến nhánh code chờ duyệt (luồng chính) |
-| `run_lab.py` | Chỉ cần nghiên cứu một câu hỏi trên bộ nguồn bạn cung cấp |
+| Risk | Typical work | PRD + techspec | Stops for you at | Code reviewers |
+| --- | --- | --- | --- | --- |
+| P0 | money, idempotency, authorization, merchant isolation | yes | PRD, techspec, release | 3 |
+| P1 | deploy, migration, integrations (default) | yes | PRD, techspec, release | 2 |
+| P2 | lists, filters, dashboards | yes | techspec, release | 1 |
+| P3 | demos, experiments | no | release | 1 |
 
-## Cài đặt
+You set a floor with `--risk`. Triage can raise it but never lower it, and you can change
+it at any gate. Kind `design` adds the UI reviewer on top of these counts.
 
-Cần Linux, Python 3.13, git, và ba CLI đã cài và đăng nhập sẵn: `codex`, `claude`, `agy`.
+When a reviewer raises a blocker or major finding, or the tests fail, the work goes back
+for another round (two rounds per document and two fix rounds by default, set in
+`config/flow.json`). Whatever is still open when the rounds run out is shown to you at the
+next gate.
+
+## Quick start
+
+You need Linux, Python 3.13, git, and the `codex`, `claude` and `agy` CLIs installed and
+logged in.
 
 ```bash
 git clone https://github.com/hoanghuydev/workflow-coding.git && cd workflow-coding
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock.txt
 cp config/agents.example.json config/agents.local.json
-# Sửa config/agents.local.json: đường dẫn tuyệt đối tới từng CLI (`which codex`),
-# model ID và effort mà tài khoản của bạn dùng được.
-
-.venv/bin/python run_flow.py start --demo --auto-approve   # chạy thử offline, không tốn quota
-.venv/bin/python run_lab.py --check                        # kiểm cấu hình và version CLI, không gọi model
-.venv/bin/python -m unittest discover -s tests             # test offline
+# Edit config/agents.local.json: the absolute path to each CLI (`which codex`),
+# and the model IDs and effort levels your accounts can use.
 ```
 
-`--demo` dùng CLI giả lập và một repo mẫu, nên chỉ chứng minh luồng chạy đúng,
-không chứng minh login, quota hay model thật.
-
-## Dùng qua AI (khuyến nghị)
-
-Mở repo này bằng Claude Code, Codex hoặc Antigravity rồi nói việc bạn cần. AI đọc
-`AGENTS.md` (Claude Code đọc qua `CLAUDE.md`), nên biết cách vận hành flow thay bạn:
-
-1. Hỏi những gì nó không tự tìm được: repo đích, nhánh gốc, lệnh test, mức rủi ro.
-2. Viết yêu cầu vào `requests/<ngày>-<tên>.md`, đưa bạn xem, rồi mới `start`.
-3. Khi flow dừng ở một cổng duyệt: đọc tài liệu, finding, kết quả test và diff, tóm
-   tắt lại cho bạn, rồi hỏi bạn quyết định.
-4. Chuyển câu trả lời của bạn thành lệnh `approve`/`revise`/`reject`. AI không tự duyệt
-   thay bạn, không merge, không push.
-5. Khi xong: tóm tắt `report.md`, chỉ nhánh code và lệnh để bạn tự review, merge.
-
-Ví dụ:
-
-> **Bạn:** Thêm bộ lọc theo trạng thái cho trang /transactions trong repo ~/code/cpay
->
-> **AI:** Tôi đề xuất mức rủi ro P2, lệnh test `go test ./...`. Đây là yêu cầu tôi
-> viết (...). Chạy nhé?
->
-> **Bạn:** Chạy đi
->
-> **AI:** Flow đang dừng ở cổng techspec (đã dùng 5/40 lượt gọi). Techspec sửa 3 file,
-> không đổi schema. CTO còn 1 finding major: chưa xử lý trạng thái rỗng. Bạn muốn
-> duyệt hay yêu cầu sửa?
-
-**Ranh giới:** AI mở trong repo này chỉ sửa trực tiếp repo này: rule chung, persona,
-protocol, skill chung, code của flow. Dự án khác chỉ được thay đổi qua flow. Muốn sửa
-nhanh trực tiếp một dự án khác thì mở AI ngay trong repo đó. Rule và skill riêng của
-dự án nằm trong repo dự án, phải commit ở đó trước khi start. Thay đổi ở repo này chỉ
-áp dụng cho task tạo sau đó, vì mỗi task đã khóa cấu hình lúc tạo.
-
-Quay lại sau nhiều ngày: hỏi AI "đang có task nào?". AI sẽ chạy `run_flow.py list`.
-Phần dưới là các lệnh mà AI chạy; bạn cũng có thể tự gõ.
-
-## Dùng work flow
-
-### 1. Viết yêu cầu
-
-Một file Markdown mô tả việc cần làm, như khi giao cho một developer:
-
-```markdown
-# Lọc giao dịch theo trạng thái
-
-Merchant cần lọc danh sách giao dịch theo trạng thái (thành công / chờ / lỗi)
-trên trang /transactions. Dùng endpoint list hiện có. Không đổi schema DB.
-```
-
-### 2. Bắt đầu task
+Try the whole flow offline first. The demo uses fake CLIs and a throwaway repo, so it
+spends no quota:
 
 ```bash
-.venv/bin/python run_flow.py start --request yeu-cau.md \
+.venv/bin/python run_flow.py start --demo --auto-approve
+```
+
+```text
+tasks/20261104T012609Z-db80cdd7
+kind: code
+start triage: codex
+start prd-draft-1: codex
+start prd-review-requirements-reviewer-1: claude
+start techspec-draft-1: codex
+start techspec-review-architecture-reviewer-1: claude
+auto-approve techspec (demo)
+start implement-1: codex
+start code-review-code-reviewer-1: claude
+auto-approve release (demo)
+task 20261104T012609Z-db80cdd7: risk P2, model calls 7/40
+finished: approved; report: tasks/20261104T012609Z-db80cdd7/report.md
+```
+
+(Output shortened.) The demo shows that the flow runs end to end. It does not show that
+your logins, quota or real models work. Check those without calling a model:
+
+```bash
+.venv/bin/python run_lab.py --check                  # config and CLI versions
+.venv/bin/python -m unittest discover -s tests       # offline test suite
+```
+
+## Use it through your AI assistant (recommended)
+
+Open this repo in Claude Code, Codex or Antigravity and say what you need. The assistant
+reads `AGENTS.md` (Claude Code reaches it through `CLAUDE.md`), so it knows how to run the
+flow for you:
+
+1. It asks only for what it can't look up itself: target repo, base branch, test command
+   and risk tier.
+2. It writes the request to `requests/<date>-<name>.md`, shows it to you, and starts only
+   after you say go.
+3. At each gate it reads the specs, findings, test results and diff, sums them up, and
+   asks what you want to do.
+4. It turns your answer into `approve`, `revise` or `reject`. It never approves for you,
+   and never merges or pushes.
+5. When the task is done, it summarizes `report.md` and gives you the commands to review
+   and merge the branch yourself.
+
+> **You:** Add a status filter to the /transactions page in ~/code/cpay
+>
+> **AI:** I'd use kind `code`, risk P2, and `go test ./...` as the test command. Here's
+> the request I wrote (...). Shall I start it?
+>
+> **You:** Go ahead.
+>
+> **AI:** The flow is waiting at the techspec gate (5 of 40 model calls used). The
+> techspec touches 3 files and leaves the schema alone. The architecture-reviewer has one
+> open major finding: the empty state isn't handled. Approve, or ask for a revision?
+
+Coming back days later? Ask "which tasks are open?" and the assistant runs
+`run_flow.py list`.
+
+**Scope.** An assistant opened in this repo changes this repo (shared rules, personas,
+protocols, shared skills and the flow's own code), and first asks whether you want it to
+edit directly or run the change as a flow task. Other projects change only through a
+flow task. For a quick direct edit to another project, open an assistant in that project.
+A project's own rules and skills live in its repo and must be committed there before you
+start a task. Changes here apply only to tasks created afterwards, because each task locks
+its configuration when it is created.
+
+## Use it from the command line
+
+Everything the assistant does, you can type yourself.
+
+### 1. Write a request
+
+A Markdown file that describes the work the way you'd brief a developer:
+
+```markdown
+# Filter transactions by status
+
+Merchants need to filter the transaction list by status (succeeded / pending / failed)
+on the /transactions page. Use the existing list endpoint. Don't change the DB schema.
+```
+
+### 2. Start a task
+
+```bash
+.venv/bin/python run_flow.py start --request request.md --kind code \
   --repo ~/code/cpay --base main --test "go test ./..." --risk P2
 ```
 
-| Tham số | Ý nghĩa |
+| Option | What it does |
 | --- | --- |
-| `--kind` | Loại việc: `code` (tính năng, sửa bug; mặc định), `design` (UI/UX), `docs` (tài liệu), `content` (copy trang chủ). Loại việc quyết định các bước và persona; bạn không cần gọi persona |
-| `--repo`, `--base` | Repo đích và nhánh gốc. Agent làm trong worktree mới, nhánh `flow/<task-id>`; repo gốc không bị đụng |
-| `--test` | Lệnh test mà supervisor tự chạy sau mỗi vòng code. Đây là bằng chứng duy nhất được tin; lời model nói "test đã đạt" thì không |
-| `--risk` | Mức rủi ro tối thiểu (mặc định P1). Triage chỉ được nâng, không được hạ |
-| `--brief` | (Tùy chọn) bộ nguồn để chạy research trước khi viết PRD |
-| `--rules` | (Tùy chọn, lặp được) file rule thêm trong repo đích, ví dụ `docs/quy-uoc.md` |
-| `--skill` | (Tùy chọn, lặp được) skill cho task này, lấy từ repo dự án hoặc skill chung |
-| `--max-calls` | Giới hạn số lượt gọi model của task (mặc định 40) |
+| `--kind` | `code` (default), `design`, `docs` or `content`. Picks the steps and the personas |
+| `--repo`, `--base` | Target repo and base ref (default `HEAD`). Agents work in a new worktree on branch `flow/<task-id>`; your checkout is left alone |
+| `--test` | The command the supervisor runs after each code round. It is the only test evidence the flow trusts. Without it, the release gate shows tests as not run |
+| `--risk` | Risk floor (default P1). Triage can raise it, never lower it |
+| `--brief` | Optional sources to research before the PRD is written |
+| `--rules` | Optional, repeatable. Extra rule files inside the target repo, e.g. `docs/conventions.md` |
+| `--skill` | Optional, repeatable. Skills for this task, from the project repo or the shared set |
+| `--max-calls` | Model call limit for the task (default 40) |
+| `--timeout` | Seconds per CLI job (default 900) |
 
-Loại việc quyết định ai viết và ai review:
+### 3. Answer at a gate
 
-| Loại | Các bước | Ví dụ lời nhờ |
-| --- | --- | --- |
-| `code` | PRD → techspec → code → test → review | "Thêm bộ lọc trạng thái", "Sửa lỗi ABC khi hoàn tiền" |
-| `design` | PRD → đặc tả UX (luôn dừng chờ duyệt) → techspec → code → review code + UI | "Làm lại màn hình in đơn" |
-| `docs` | technical-writer viết → docs-verifier đối chiếu với code | "Viết docs API webhook theo kiểu TikTok API" |
-| `content` | copywriter viết → content-editor soát | "Viết lại copy trang chủ" |
-
-Mức rủi ro quyết định số bước và số người review:
-
-| Rủi ro | Ví dụ | PRD + techspec | Người duyệt dừng ở | Reviewer code |
-| --- | --- | --- | --- | --- |
-| P0 | tiền, idempotency, phân quyền | có | PRD, techspec, release | 3 |
-| P1 | deploy, migration, tích hợp | có | PRD, techspec, release | 2 |
-| P2 | danh sách, bộ lọc, dashboard | có | techspec, release | 1 |
-| P3 | demo, thử nghiệm | không | release | 1 |
-
-### 3. Trả lời khi flow dừng chờ bạn
-
-Lệnh `start` chạy đến cổng duyệt đầu tiên rồi dừng (exit code `2`) và in ra file
-cần đọc, ví dụ `tasks/<task-id>/gates/techspec-r1.md`. File đó tóm tắt tài liệu,
-các finding còn mở và in sẵn lệnh trả lời:
+`start` runs until the first gate, then exits with code `2` and prints the file to read,
+e.g. `tasks/<task-id>/gates/techspec-r1.md`. That file sums up the document and the open
+findings and lists the reply commands:
 
 ```bash
-.venv/bin/python run_flow.py list                                    # mọi task và việc đang chờ
-.venv/bin/python run_flow.py status  <task-id>                       # đang ở đâu, chờ gì
-.venv/bin/python run_flow.py approve <task-id> [--note "..."]        # đồng ý, đi tiếp
-.venv/bin/python run_flow.py revise  <task-id> --note "Thiếu case trạng thái rỗng"
-.venv/bin/python run_flow.py reject  <task-id> --note "Không làm nữa"
-.venv/bin/python run_flow.py approve <task-id> --risk P0             # đổi mức rủi ro từ đây trở đi
+.venv/bin/python run_flow.py list                                  # every task and what it waits for
+.venv/bin/python run_flow.py status  <task-id>                     # where one task is
+.venv/bin/python run_flow.py approve <task-id> [--note "..."]      # go ahead
+.venv/bin/python run_flow.py revise  <task-id> --note "Handle the empty state"
+.venv/bin/python run_flow.py reject  <task-id> --note "Not needed any more"
+.venv/bin/python run_flow.py approve <task-id> --risk P0           # change the tier from here on
 ```
 
-`revise` gửi bước đó lại cho AI. Note của bạn thành một yêu cầu bắt buộc mà vòng
-sau phải xử lý và giải trình. Task có thể chờ bao lâu cũng được: trạng thái nằm
-trong `tasks/<task-id>/`.
+`revise` sends the step back to the AI. Your note becomes a blocker that the next round
+must resolve and explain. A task can wait as long as you like: its state lives in
+`tasks/<task-id>/`.
 
-Các cổng đặc biệt:
+Two special gates:
 
-| Cổng | Khi nào | Trả lời |
+| Gate | When | How to answer |
 | --- | --- | --- |
-| `research` | Triage thấy cần thông tin bên ngoài mà repo không có | `research <id> --brief nguon.md`, hoặc `approve` để bỏ qua |
-| `blocked` | Một lượt gọi AI lỗi, timeout, hoặc hết `--max-calls` | Xem log trong `tasks/<id>/jobs/`, rồi `retry <id> [--max-calls 60]` hoặc `reject` |
+| `research` | Triage needs outside facts the repo doesn't have | `research <id> --brief sources.md`, or `approve` to skip |
+| `blocked` | A model call failed, timed out, or hit `--max-calls` | Read the logs in `tasks/<id>/jobs/`, then `retry <id> [--max-calls 60]` or `reject` |
 
-Flow không tự retry. Nếu máy tắt hay bạn bấm Ctrl-C, chạy
-`run_flow.py resume <task-id>`: lượt gọi đã xong được dùng lại, không tốn quota lần hai.
+The flow never retries on its own. If your machine shuts down or you press Ctrl-C, run
+`run_flow.py resume <task-id>`: finished calls are reused, not paid for twice.
 
-### 4. Nhận kết quả
+### 4. Get the result
 
-Sau khi bạn `approve` ở release gate:
+After you approve the release gate:
 
-- Code nằm ở nhánh `flow/<task-id>` trong repo đích, mỗi vòng một commit có trailer
-  `Flow-Persona`, `Flow-Runtime`. Bạn tự review diff rồi merge như bình thường.
-- `tasks/<task-id>/docs/prd.md`, `docs/techspec.md`: tài liệu cuối.
-- `tasks/<task-id>/report.md`: tóm tắt quyết định và số lượt gọi.
-- Dọn worktree: `git -C ~/code/cpay worktree remove <đường dẫn tasks/<id>/worktree>`.
+- The code is on branch `flow/<task-id>` in the target repo, one commit per round, with
+  `Flow-Persona` and `Flow-Runtime` trailers. Review the diff and merge it as you normally
+  would: `git -C ~/code/cpay diff main...flow/<task-id>`.
+- `tasks/<task-id>/docs/prd.md` and `docs/techspec.md` hold the final specs.
+- `tasks/<task-id>/report.md` lists your decisions, the test result and the calls used.
+- Clean up the worktree: `git -C ~/code/cpay worktree remove <path to tasks/<id>/worktree>`.
 
-## Dùng research riêng
+## Research only
 
 ```bash
 .venv/bin/python run_lab.py --brief path/brief.md --timeout 900
 ```
 
-Brief gồm câu hỏi và các mục `Source S01`, `Source S02`... chứa nguyên văn nguồn.
-Ba AI nghiên cứu độc lập, audit chéo, phản biện, rồi xuất `runs/<run-id>/final-report.md`
-với các kết luận được chia thành verified, disputed và inconclusive. Mẫu:
-[inputs/brief.md](inputs/brief.md). Chi tiết: [docs/research.md](docs/research.md).
+The brief holds your question and `Source S01`, `Source S02`... sections with the source
+text itself. Three AIs research it independently, audit each other's claims against the
+sources, challenge them in a fresh session, and write `runs/<run-id>/final-report.md`,
+with every finding marked verified, disputed or inconclusive. A full run makes 13 model
+calls. The pipeline doesn't browse the web, so it only knows what you put in the brief.
+"Verified" means an AI checked the claim against your sources, not that a person did.
+Template: [inputs/brief.md](inputs/brief.md). Details: [docs/research.md](docs/research.md).
 
-## Tùy chỉnh
+## Make it yours
 
-| File | Chứa gì |
+| File | What it holds |
 | --- | --- |
-| `config/agents.local.json` | Đường dẫn CLI, model và effort mặc định của máy bạn (không commit) |
-| `config/personas.json` | 14 persona: runtime, model, effort, model đối chứng, vai trò, tư duy, khi nào phải hỏi người. Danh sách: [docs/flow.md](docs/flow.md#danh-sách-persona) |
-| `config/flow.json` | Ai làm gì ở mức rủi ro nào, cổng duyệt, giới hạn vòng sửa, số lượt gọi |
-| `protocols/flow/*.md` | Hướng dẫn cho từng bước (triage, PRD, techspec, implement, review, QA) |
-| `protocols/*.md`, `config/review-rubric.md` | Hướng dẫn cho research |
-| `rules/*.md` | Rule code chung cho mọi dự án |
+| `config/agents.local.json` | CLI paths and default models for your machine (not committed) |
+| `config/personas.json` | The 14 personas: runtime, model, effort, role, mindset, when to ask a human |
+| `config/flow.json` | Who does what at each risk tier, gates, round limits, call limits, kinds of work |
+| `protocols/flow/*.md` | Instructions for each step: triage, PRD, techspec, implement, review, QA |
+| `protocols/*.md`, `config/review-rubric.md` | Instructions for research |
+| `rules/*.md` | Coding rules for every project |
 
-### Rule và skill
+When it loads the config, the flow refuses to run if a reviewer shares a CLI with the
+author, if Antigravity is given a role that writes code (its write mode isn't verified
+yet), or if a risk tier has no release gate. Each task seals its configuration when it is
+created, so editing config never changes a task that is already running.
 
-| Loại | Đặt ở đâu | Áp dụng |
+### Rules and skills
+
+| Type | Where it lives | Applies to |
 | --- | --- | --- |
-| Rule chung | `rules/*.md` trong repo này | mọi task |
-| Rule dự án | `AGENTS.md`, `CLAUDE.md` ở gốc repo dự án (tự đọc); file khác thì dùng `--rules <đường dẫn trong repo>` | task trên repo đó |
-| Skill chung | `.agents/skills/<tên>/` trong repo này, hash ghi trong `config/skills.lock.json` | bước được gán trong `config/flow.json` → `skills`, hoặc một task qua `--skill <tên>` |
-| Skill dự án | `.agents/skills/<tên>/` hoặc `.claude/skills/<tên>/` trong repo dự án | task chọn nó bằng `--skill <tên>` |
+| Shared rule | `rules/*.md` in this repo | every task |
+| Project rule | `AGENTS.md` and `CLAUDE.md` at the project root (read automatically); other files via `--rules <path in repo>` | tasks on that repo |
+| Shared skill | `.agents/skills/<name>/` in this repo, hashed in `config/skills.lock.json` | steps assigned in `config/flow.json` → `skills`, or one task via `--skill <name>` |
+| Project skill | `.agents/skills/<name>/` or `.claude/skills/<name>/` in the project repo | tasks that pick it with `--skill <name>` |
 
-- **Rule là quy định bắt buộc.** Mọi bước nhận nguyên văn rule, và reviewer kiểm theo rule.
-- **Skill là kiến thức tham khảo,** xếp sau rule.
-- **Skill phải chọn theo task,** vì mỗi skill được chọn tốn token ở mọi lượt gọi của các bước có code.
-- **Script trong `scripts/` của một skill dự án** chỉ bước viết code được chạy, và chỉ đúng
-  lệnh flow liệt kê. Kết quả cần làm bằng chứng thì đưa script vào `--test`, để supervisor tự chạy.
-- **Rule và skill dự án được đọc từ commit gốc,** nên phải commit chúng trước khi start.
-- **Rule và skill trong `~/.claude/`, `~/.codex/`** chỉ áp dụng cho AI bạn đang chat, không tới AI con.
+- **Rules are binding.** Every step gets them verbatim, and reviewers check against them.
+  A rule written as *must* or *never* counts as at least a major finding when broken.
+- **Skills are guidance** and rank below rules. 14 shared skills ship with the repo; the
+  list and when each fits is in [docs/research.md](docs/research.md#skills).
+- **Pick skills per task.** Every skill you add costs tokens on every call in the code
+  steps.
+- **Scripts in a project skill's `scripts/`** can be run only by the implement step, and
+  only as the exact commands the flow lists. To make a script's result count as evidence,
+  put it in `--test` so the supervisor runs it.
+- **Project rules and skills are read from the base commit,** so commit them before you
+  start.
+- **Rules and skills in `~/.claude/` or `~/.codex/`** apply only to the assistant you chat
+  with, never to the flow's workers.
 
-Chi tiết xem [docs/flow.md](docs/flow.md#rule).
+More: [docs/flow.md](docs/flow.md#rule).
 
-Khi nạp cấu hình, flow tự kiểm tra và từ chối nếu reviewer chạy cùng CLI với tác
-giả, nếu Antigravity được giao viết code (chế độ ghi của nó chưa được kiểm chứng),
-hoặc nếu một mức rủi ro thiếu release gate. Mỗi task khóa (seal) cấu hình lúc
-tạo, nên sửa config không ảnh hưởng task đang chạy.
+## A second opinion on your assistant
 
-## Chấm bài cuối lượt
+Every time the assistant you chat with in this repo finishes a turn, the CLI runs
+`hooks/stop_audit.py`. It sends a copy of the session transcript to a model from the other
+vendor, which grades it against `hooks/stop-audit.md`: claims without tool output to back
+them, constraints of yours that were dropped, actions you didn't authorize (including
+approving a gate you hadn't decided), sensitive data leaks, unfinished work reported as
+done, and conclusions reversed under pushback without new evidence. If it finds a problem,
+the assistant has to fix it or explain before stopping. Each turn is blocked at most once.
+If the grader fails (quota, timeout), the assistant has to say that turn went ungraded.
 
-Mỗi lần AI bạn đang chat ở repo này trả lời xong, CLI chạy `hooks/stop_audit.py`. Script gửi
-bản sao transcript của phiên cho một model của hãng khác chấm, theo đề `hooks/stop-audit.md`.
-Đề chấm gồm: khẳng định không có output công cụ làm bằng chứng, ràng buộc của bạn bị bỏ sót,
-hành động chưa được phép (kể cả approve gate khi bạn chưa quyết), lộ dữ liệu nhạy cảm, việc dở
-báo là xong, đổi kết luận khi bị phản bác mà không có bằng chứng mới. Có lỗi thì AI phải sửa
-hoặc giải thích rồi mới dừng. Mỗi lượt chỉ bị chặn một lần. Người chấm lỗi (hết quota, quá giờ)
-thì AI phải báo lượt đó chưa được chấm.
-
-| Bạn chat bằng | File cấu hình | Người chấm | Cần làm một lần |
+| You chat with | Config file | Graded by | One-time setup |
 | --- | --- | --- | --- |
-| Claude Code | `.claude/settings.json` (bị gitignore, chỉ máy bạn) | Codex `gpt-6.1-sol`, effort medium | không |
-| Codex | `.codex/hooks.json` | Claude `claude-opus-5-5`, effort medium | gõ `/hooks` và trust hook; làm lại khi hook đổi |
-| Antigravity | `.agents/hooks.json` | Claude `claude-opus-5-5`, effort medium | không |
+| Claude Code | `.claude/settings.json` (gitignored, your machine only) | Codex `gpt-6.1-sol`, medium effort | none |
+| Codex | `.codex/hooks.json` | Claude `claude-opus-5-5`, medium effort | type `/hooks` and trust the hook; again whenever it changes |
+| Antigravity | `.agents/hooks.json` | Claude `claude-opus-5-5`, medium effort | none |
 
-- **Worker của flow không bị chấm.** `lab/runtime.py` gắn `SEPAY_LAB_WORKER=1` cho mọi CLI nó
-  bật, script thấy cờ này thì bỏ qua. Người chấm cũng mang cờ này, nên không tự chấm chính nó.
-- **Tắt tạm:** mở CLI với `SEPAY_LAB_STOP_AUDIT=off`.
-- **Log** ở `~/.cache/sepay-lab-stop-audit/audit.log`, chỉ ghi kết quả và thời gian, không ghi nội dung.
-  Người chấm lỗi liên tục thì chỉ báo một lần mỗi phiên, các lần sau chỉ ghi `error_repeat` vào log.
-- **Giới hạn:**
-  - Người chấm vẫn là AI nên có thể bỏ sót hoặc bắt lỗi rất nhỏ.
-  - Bản sửa sau khi bị chặn không được chấm lại.
-  - Mỗi lượt chậm thêm khoảng 10–30 giây.
-  - Transcript của phiên được gửi sang hãng còn lại, nên đừng dán secret vào cuộc chat.
-  - Người chấm Claude chỉ đọc được bản sao transcript (`--restricted`). Sandbox read-only của Codex
-    vẫn đọc được file khác trên máy, nên đề chấm cấm nó mở file ngoài transcript.
-  - Codex chạy hook chưa trust mà không báo gì: sau khi sửa `.codex/hooks.json`, nhớ `/hooks` trust lại.
+- **Flow workers are not graded.** `lab/runtime.py` sets `SEPAY_LAB_WORKER=1` on every CLI
+  it launches and the hook skips them. The grader carries the same flag, so it never
+  grades itself.
+- **Turn it off for a session:** start the CLI with `SEPAY_LAB_STOP_AUDIT=off`.
+- **Log:** `~/.cache/sepay-lab-stop-audit/audit.log` records only verdicts and times, not
+  content. A grader that keeps failing is reported once per session, then only logged as
+  `error_repeat`.
+- **Limits:**
+  - The grader is an AI too. It can miss things or flag trivia.
+  - A fix made after a block is not graded again.
+  - Each turn takes about 10–30 seconds longer.
+  - The transcript goes to the other vendor, so don't paste secrets into the chat.
+  - The Claude grader can read only the transcript copy (`--restricted`). Codex's
+    read-only sandbox can still read other files on the machine, so the grading prompt
+    forbids it from opening anything but the transcript.
+  - Codex skips untrusted hooks silently: after editing `.codex/hooks.json`, run `/hooks`
+    and trust it again.
 
-## Lưu ý an toàn
+## Safety and limits
 
-- Lệnh test chạy code do AI viết ngay trên máy bạn. Quyền của CLI chưa phải cách
-  ly hệ điều hành: Codex có sandbox, còn Claude Code chỉ bị giới hạn bằng
-  allowlist công cụ. Đừng chạy trên máy có secret production.
-- `--max-calls` và `--timeout` giới hạn số lượt gọi và thời gian, không phải tiền.
-- AI review không thay được người review. Release gate tồn tại để bạn đọc diff.
-- Không commit `config/agents.local.json`, `tasks/`, `runs/`, `requests/`, `.venv/`.
+- **Tests run AI-written code on your machine.** CLI permissions are not OS isolation:
+  Codex has a sandbox, Claude Code is limited by a tool allowlist. Don't run the flow on a
+  machine that holds production secrets.
+- **`--max-calls` and `--timeout` cap calls and time, not money.**
+- **AI review doesn't replace human review.** The release gate exists so you read the
+  diff.
+- **Antigravity only reviews for now.** It is never given a role that writes code.
+- **The UI reviewer sees code and test output, not rendered screens.** Anything that needs
+  a real screen or real interaction is marked `unverified`.
+- **Gate files, reports and the in-depth docs are in Vietnamese** for now.
+- Don't commit `config/agents.local.json`, `tasks/`, `runs/`, `requests/` or `.venv/`.
 
-## Tài liệu
+## Documentation
 
-- [AGENTS.md](AGENTS.md): quy tắc cho AI khi vận hành flow hoặc sửa repo này
-- [docs/flow.md](docs/flow.md): kiến trúc work flow, bất biến, quyền theo chế độ, cấu trúc thư mục task
-- [docs/research.md](docs/research.md): research pipeline, resume, artifact, thêm skill
+- [AGENTS.md](AGENTS.md): rules for the AI that runs the flow or edits this repo
+- [docs/flow.md](docs/flow.md): flow architecture, invariants, permissions per mode, the
+  task folder layout (Vietnamese)
+- [docs/research.md](docs/research.md): research pipeline, resume, artifacts, adding
+  skills (Vietnamese)
