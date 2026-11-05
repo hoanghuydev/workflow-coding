@@ -81,8 +81,8 @@ Một mục trong `roles` có thể là tên persona, hoặc dạng `{"persona",
 
 | Tier | Ví dụ | Tài liệu | Gate luôn dừng | Implement | Code review |
 | --- | --- | --- | --- | --- | --- |
-| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | release | engineer (Codex Sol high) | code-reviewer (Opus high) + critical-invariants-reviewer (Opus xhigh) + adversarial-qa (Antigravity) |
-| P1 | deploy, migration, tích hợp | PRD + techspec | release | engineer (Sol high) | code-reviewer (Opus high) + adversarial-qa |
+| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | release | engineer (Codex Sol high) | code-reviewer (Opus high) + critical-invariants-reviewer (Opus xhigh) + adversarial-qa (Antigravity Opus 4.6) |
+| P1 | deploy, migration, tích hợp | PRD + techspec | release | engineer (Sol high) | code-reviewer (Opus high) + adversarial-qa (Antigravity Gemini flash) |
 | P2 | danh sách, bộ lọc, dashboard | PRD + techspec | release | engineer (Sol medium) | code-reviewer (Sonnet high) |
 | P3 | demo, thử nghiệm | không | release | engineer (Sol medium) | code-reviewer (Sonnet high) |
 
@@ -120,7 +120,7 @@ gọi nó.
 | architecture-reviewer | review techspec | Claude opus-5-5 high | sonnet-5-5 high |
 | code-reviewer | review code | Claude sonnet-5-5 high (opus ở P0/P1) | opus-5-5 high |
 | critical-invariants-reviewer | review code P0 | Claude opus-5-5 xhigh | fable-5-1 high |
-| adversarial-qa | review code P0/P1 | Antigravity gemini-3.8-flash-high | claude-opus-4-6-thinking |
+| adversarial-qa | review code P0/P1 | Antigravity gemini-3.8-flash-high (claude-opus-4-6-thinking ở P0) | claude-opus-4-6-thinking |
 | technical-writer | viết, loại `docs` | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |
 | docs-verifier | review, loại `docs` | Claude sonnet-5-5 high | opus-5-5 high |
 | copywriter | viết, loại `content` | Codex gpt-6.1-terra medium | gpt-6.1-sol medium |

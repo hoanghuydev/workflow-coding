@@ -47,7 +47,10 @@
           "model": "claude-opus-5-5"
         },
         "critical-invariants-reviewer",
-        "adversarial-qa"
+        {
+          "persona": "adversarial-qa",
+          "model": "claude-opus-4-6-thinking"
+        }
       ],
       "P1": [
         {
@@ -90,7 +93,10 @@
             },
             "critical-invariants-reviewer",
             "ui-reviewer",
-            "adversarial-qa"
+            {
+              "persona": "adversarial-qa",
+              "model": "claude-opus-4-6-thinking"
+            }
           ],
           "P1": [
             {
