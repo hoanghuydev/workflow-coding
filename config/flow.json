@@ -6,6 +6,10 @@
   "max_fix_rounds": 2,
   "diff_limit_bytes": 200000,
   "test_timeout": 1800,
+  "timeouts": {
+    "implement": 3600,
+    "review": 1200
+  },
   "allow_bash": [],
   "roles": {
     "triage": "triage-lead",
@@ -130,17 +134,12 @@
   },
   "gates": {
     "P0": [
-      "prd",
-      "techspec",
       "release"
     ],
     "P1": [
-      "prd",
-      "techspec",
       "release"
     ],
     "P2": [
-      "techspec",
       "release"
     ],
     "P3": [
@@ -154,6 +153,12 @@
     "P3": false
   },
   "skills": {
+    "prd-review": [
+      "decision-review"
+    ],
+    "techspec-review": [
+      "decision-review"
+    ],
     "code-review": [
       "code-review-excellence"
     ],
@@ -164,7 +169,8 @@
       "avoid-ai-writing"
     ],
     "uxspec-review": [
-      "wcag-audit-patterns"
+      "wcag-audit-patterns",
+      "decision-review"
     ],
     "ui-review": [
       "wcag-audit-patterns"

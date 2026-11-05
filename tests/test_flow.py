@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -43,6 +44,12 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
     def behaviors(self, values):
         runtime.write_json(self.root / "tests/behaviors.json", values)
 
+    def set_gates(self, **tiers):
+        """Make a tier stop at document gates again (the shipped config only gates the release)."""
+        flow = runtime.read_json(self.root / "config/flow.json")
+        flow["gates"].update(tiers)
+        runtime.write_json(self.root / "config/flow.json", flow)
+
     def calls(self):
         path = self.root / "tests/calls.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
@@ -69,17 +76,29 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_p2_flow_gates_commit_tests_and_finish_without_merge(self):
         snapshot = await self.start()
-        self.assertEqual(self.gate(snapshot), "techspec")  # P2 has no PRD gate
-        self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-requirements-reviewer-1",
-                                       "techspec-draft-1", "techspec-review-architecture-reviewer-1"])
-        snapshot = await self.decide(action="approve")
+        # Clean documents pass without a person: the first stop is the release gate.
         self.assertEqual(self.gate(snapshot), "release")
+        self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-requirements-reviewer-1",
+                                       "techspec-draft-1", "techspec-review-architecture-reviewer-1",
+                                       "implement-1", "code-review-code-reviewer-1"])
         values = snapshot.values
         self.assertEqual(values["tests"]["status"], "passed")
         worktree = self.task.worktree
         self.assertEqual(workspace.head(worktree), values["implementation"]["head"])
         self.assertIn("Flow-Job: implement-1", workspace.git(worktree, "log", "-1", "--format=%B"))
         self.assertEqual(sorted(values["implementation"]["changed_files"]), ["fees.py", "test_fees_zero.py"])
+        # Two layers: the plain summary first, details for whoever reads in depth.
+        prd = (self.task.directory / "docs/prd.md").read_text()
+        self.assertLess(prd.index("## Tóm tắt dễ đọc"), prd.index("## Chi tiết"))
+        self.assertIn("1. Nhập số tiền", prd)
+        self.assertIn("## AI đã tự quyết (bạn có thể đổi)", prd)
+        release = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
+        self.assertLess(release.index("## Tóm tắt dễ đọc"), release.index("## Chi tiết cho người đọc kỹ"))
+        self.assertIn("**Tự kiểm tra trên sản phẩm:**", release)
+        self.assertIn("- Test tự động: **đạt**.", release)
+        # The assumption the PRD settled itself is logged on the branch for later tasks.
+        log = (worktree / "docs/flow-decisions.md").read_text()
+        self.assertIn("| Làm tròn thế nào? | Làm tròn lên tới đồng | AI tự quyết |", log)
         # The base repository branch is untouched: the flow never merges.
         repo = Path(self.task.settings["repo"])
         self.assertEqual(workspace.head(repo), self.task.settings["base_sha"])
@@ -99,6 +118,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.calls()), calls)
 
     async def test_human_revise_becomes_a_finding_the_author_must_resolve(self):
+        self.set_gates(P2=["techspec", "release"])
         snapshot = await self.start()
         snapshot = await self.decide(action="revise", note="Thêm failure mode cho số tiền quá lớn")
         self.assertEqual(self.gate(snapshot), "techspec")
@@ -111,26 +131,35 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("techspec", snapshot.values.get("notes", {}))
         self.assertTrue((self.task.directory / "docs/techspec-r2.md").exists())
 
-    async def test_failed_tests_and_blocking_review_drive_fix_rounds(self):
-        self.behaviors({"implement-1": "buggy", "code-review-code-reviewer-1": "blocking"})
+    async def test_red_build_skips_review_and_blocking_review_drives_a_fix_round(self):
+        self.behaviors({"implement-1": "buggy", "code-review-code-reviewer-2": "blocking"})
         snapshot = await self.start()
-        snapshot = await self.decide(action="approve")
         self.assertEqual(self.gate(snapshot), "release")
         values = snapshot.values
-        self.assertEqual(values["impl_round"], 2)
+        self.assertEqual(values["impl_round"], 3)
         self.assertEqual(values["tests"]["status"], "passed")
         first = runtime.read_json(self.task.directory / "tests/round-1.json")
         self.assertEqual(first["status"], "failed")
-        context = self.packet_context("implement-2", "codex")
-        required = {f["id"] for f in context["findings_to_resolve"]}
-        self.assertEqual(required, {"code-reviewer/F1", "supervisor/tests"})
-        self.assertEqual(len(workspace.log(self.task.worktree, self.task.settings["base_sha"],
-                                           values["implementation"]["head"])), 2)
+        # No reviewer is paid to read a red build: round 1 goes straight back to the implementer.
+        self.assertNotIn("code-review-code-reviewer-1", self.jobs())
+        required = {f["id"] for f in self.packet_context("implement-2", "codex")["findings_to_resolve"]}
+        self.assertEqual(required, {"supervisor/tests"})
+        required = {f["id"] for f in self.packet_context("implement-3", "codex")["findings_to_resolve"]}
+        self.assertEqual(required, {"code-reviewer/F1"})
+        commits = workspace.log(self.task.worktree, self.task.settings["base_sha"], values["implementation"]["head"])
+        self.assertEqual(len([c for c in commits if "implement round" in c]), 2)
+
+    async def test_last_round_is_reviewed_even_when_tests_still_fail(self):
+        self.behaviors({f"implement-{n}": "buggy" for n in (1, 2, 3)})
+        snapshot = await self.start()
+        self.assertEqual(self.gate(snapshot), "release")
+        self.assertEqual(snapshot.values["tests"]["status"], "failed")
+        reviews = [job for job in self.jobs() if job.startswith("code-review-")]
+        self.assertEqual(reviews, ["code-review-code-reviewer-3"])  # the person still gets one review
 
     async def test_fix_rounds_stop_at_the_limit_and_surface_findings_at_release(self):
         self.behaviors({f"code-review-code-reviewer-{n}": "blocking" for n in (1, 2, 3)})  # every review objects
         snapshot = await self.start()
-        snapshot = await self.decide(action="approve")
         self.assertEqual(self.gate(snapshot), "release")
         self.assertEqual(snapshot.values["impl_round"], 3)  # 1 + max_fix_rounds
         summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
@@ -142,20 +171,23 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gate(snapshot), "blocked")
         self.assertIn("timeout", " ".join(snapshot.values["blocked"]["reasons"]))
         self.behaviors({})
-        seen = []
+        seen = {}
         original = runtime.worker
 
         async def spy(*args, **kwargs):
-            seen.append(kwargs["timeout"])
+            seen[Path(args[2]).name] = kwargs["timeout"]
             return await original(*args, **kwargs)
 
         with patch.object(runtime, "worker", spy):
             snapshot = await self.decide(action="retry", timeout=120)
-        self.assertEqual(self.gate(snapshot), "techspec")
-        self.assertTrue(seen)
-        self.assertEqual(set(seen), {120})  # the retried job and every later job use the raised timeout
+        self.assertEqual(self.gate(snapshot), "release")
+        # The raised timeout applies from here on; config/flow.json `timeouts` keeps a floor per stage.
+        self.assertEqual(seen, {"prd-draft-1": 120, "prd-review-requirements-reviewer-1": 1200,
+                                "techspec-draft-1": 120, "techspec-review-architecture-reviewer-1": 1200,
+                                "implement-1": 3600, "code-review-code-reviewer-1": 1200})
 
     async def test_gate_approval_can_raise_the_job_timeout_for_later_steps(self):
+        self.set_gates(P2=["techspec", "release"])
         snapshot = await self.start()
         self.assertEqual(self.gate(snapshot), "techspec")
         seen = []
@@ -166,11 +198,11 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             return await original(*args, **kwargs)
 
         with patch.object(runtime, "worker", spy):
-            snapshot = await self.decide(action="approve", timeout=77)
+            snapshot = await self.decide(action="approve", timeout=5000)
         self.assertEqual(self.gate(snapshot), "release")
         self.assertTrue(seen)
-        self.assertEqual(set(seen), {77})
-        self.assertEqual(snapshot.values["decisions"][-1]["timeout"], 77)
+        self.assertEqual(set(seen), {5000})  # above every stage floor, so it applies to all later jobs
+        self.assertEqual(snapshot.values["decisions"][-1]["timeout"], 5000)
 
     async def test_failed_job_blocks_until_explicit_retry_bound_to_that_attempt(self):
         self.behaviors({"prd-draft-1": "nonzero"})
@@ -188,7 +220,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         snapshot = await flow_task.advance(self.task, None)  # the old grant is spent
         self.assertEqual(len(self.calls()), count + 1)
         snapshot = await self.decide(action="retry")
-        self.assertEqual(self.gate(snapshot), "techspec")  # P2: no PRD gate
+        self.assertEqual(self.gate(snapshot), "release")
         self.assertEqual(self.task.state.get("prd-draft-1")["attempts"], 3)
         self.assertEqual(len(list((self.task.directory / "attempts").iterdir())), 2)
 
@@ -198,18 +230,19 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("call limit", snapshot.values["blocked"]["reasons"][0])
         self.assertEqual(len(self.calls()), 2)
         snapshot = await self.decide(action="retry", max_calls=40)
-        self.assertEqual(self.gate(snapshot), "techspec")
+        self.assertEqual(self.gate(snapshot), "release")
 
     async def test_crash_after_paid_implement_reuses_job_and_commit(self):
-        snapshot = await self.start()
         original = workspace.run_tests
 
-        async def crash(*args, **kwargs):
-            raise RuntimeError("supervisor crashed")
+        async def crash(worktree, argv, timeout, log_path):
+            if log_path.name.startswith("round-"):  # the baseline run before triage still works
+                raise RuntimeError("supervisor crashed")
+            return await original(worktree, argv, timeout, log_path)
 
         with patch.object(workspace, "run_tests", side_effect=crash):
             with self.assertRaisesRegex(RuntimeError, "supervisor crashed"):
-                await self.decide(action="approve")
+                await self.start()
         calls = self.jobs()
         head = workspace.head(self.task.worktree)
         self.assertEqual(calls.count("implement-1"), 1)
@@ -223,14 +256,13 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.behaviors({"triage": "risk_P3"})
         snapshot = await self.start(risk="P1")
         self.assertEqual(snapshot.values["risk"], "P1")
-        self.assertEqual(self.gate(snapshot), "prd")
+        self.assertEqual(self.gate(snapshot), "release")
+        self.assertIn("code-review-adversarial-qa-1", self.jobs())  # P1 reviewers, not P3
 
     async def test_p0_uses_three_independent_reviewers_including_qa(self):
         self.behaviors({"triage": "risk_P0"})
         snapshot = await self.start(risk="P2")
         self.assertEqual(snapshot.values["risk"], "P0")
-        for _ in range(2):
-            snapshot = await self.decide(action="approve")
         self.assertEqual(self.gate(snapshot), "release")
         reviewers = {c["job"]: c["worker"] for c in self.calls() if c["job"].startswith("code-review-")}
         self.assertEqual(reviewers, {"code-review-code-reviewer-1": "claude",
@@ -272,7 +304,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gate(snapshot), "research")
         brief = flow_task.copy_brief(self.task, self.root / "inputs/brief.md")
         snapshot = await self.decide(action="research", brief=brief)
-        self.assertEqual(self.gate(snapshot), "prd")
+        self.assertEqual(self.gate(snapshot), "release")
         research = snapshot.values["research"]
         self.assertEqual(research["status"], "complete")
         self.assertEqual(sum(c["job"].startswith(("research-", "audit-", "review-", "adjudication-", "synthesis-"))
@@ -307,6 +339,18 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         no_release["gates"]["P3"] = []
         with self.assertRaisesRegex(ValueError, "release"):
             check_roster(no_release, personas, agents)
+        same = copy.deepcopy(personas)
+        for name in ("code-reviewer", "critical-invariants-reviewer"):  # all three P0 reviewers on one model
+            same[name] = {**same[name], "runtime": "antigravity", "model": personas["adversarial-qa"]["model"]}
+        one_model = copy.deepcopy(flow)
+        one_model["roles"]["code_review"]["P0"] = ["code-reviewer", "critical-invariants-reviewer", "adversarial-qa"]
+        with self.assertRaisesRegex(ValueError, "code_review.P0: 3 reviewers all use"):
+            check_roster(one_model, same, agents)
+        for bad in ({"implement": 0}, {"deploy": 60}, {"review": "1200"}):
+            timeouts = copy.deepcopy(flow)
+            timeouts["timeouts"] = bad
+            with self.assertRaisesRegex(ValueError, "timeouts"):
+                check_roster(timeouts, personas, agents)
         with self.assertRaisesRegex(ValueError, "not supported"):
             runtime.cli_args("antigravity", agents["antigravity"], self.root, self.root, {}, 10, "write")
 
@@ -349,7 +393,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     await flow_task.create(self.root, demo=True, rule_paths=paths)
         self.assertEqual(sorted(p.name for p in (self.root / "tasks").iterdir()), [self.task.id])  # no leftovers
-        snapshot = await self.decide(action="approve")
+        snapshot = await flow_task.advance(self.task, invoke=False)
         self.assertEqual(self.gate(snapshot), "release")
         for job, worker in (("techspec-draft-1", "codex"), ("implement-1", "codex"),
                             ("code-review-code-reviewer-1", "claude")):
@@ -375,7 +419,6 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
                                    self.task.settings["allow_bash"])
         self.assertIn(f"Bash({command} *)", allowed)
         self.assertNotIn("Bash(python3 *)", allowed)
-        await self.decide(action="approve")
         jobs = self.task.directory / "jobs"
         for job, worker in (("techspec-draft-1", "codex"), ("implement-1", "codex"),
                             ("code-review-code-reviewer-1", "claude")):
@@ -406,16 +449,14 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("prd", snapshot.values)
 
     async def test_design_kind_adds_a_ux_spec_gate_and_a_ui_reviewer(self):
-        snapshot = await self.start(kind="design")  # P2: no PRD gate, but design always gates the UX spec
+        snapshot = await self.start(kind="design")  # design always gates the UX spec
         self.assertEqual(self.gate(snapshot), "uxspec")
         self.assertEqual(self.jobs(), ["triage", "prd-draft-1", "prd-review-requirements-reviewer-1",
                                        "uxspec-draft-1", "uxspec-review-ui-reviewer-1"])
         self.assertTrue((self.task.directory / "docs/uxspec.md").is_file())
         snapshot = await self.decide(action="approve")
-        self.assertEqual(self.gate(snapshot), "techspec")
+        self.assertEqual(self.gate(snapshot), "release")  # the techspec passes without a gate
         self.assertIn("uxspec", self.packet_context("techspec-draft-1", "codex"))  # techspec builds on the UX spec
-        snapshot = await self.decide(action="approve")
-        self.assertEqual(self.gate(snapshot), "release")
         reviews = {(c["job"], c["stage"]) for c in self.calls() if c["job"].startswith("code-review-")}
         self.assertEqual(reviews, {("code-review-code-reviewer-1", "code-review"),
                                    ("code-review-ui-reviewer-1", "ui-review")})
@@ -431,7 +472,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await run_flow.list_tasks(self.root), 0)
         rows = out.getvalue().splitlines()
         self.assertEqual(len(rows), 2)
-        self.assertTrue(any(row.startswith(self.task.id) and "awaiting techspec" in row
+        self.assertTrue(any(row.startswith(self.task.id) and "awaiting release" in row
                             and "Phí chuyển khoản" in row for row in rows), rows)
         self.assertTrue(any(row.startswith("broken  error:") for row in rows), rows)
 
@@ -444,7 +485,6 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_release_revise_grants_more_automatic_fix_rounds(self):
         self.behaviors({f"code-review-code-reviewer-{n}": "blocking" for n in range(1, 6)})
         snapshot = await self.start()
-        snapshot = await self.decide(action="approve")
         self.assertEqual(snapshot.values["impl_round"], 3)
         snapshot = await self.decide(action="revise", note="Sửa hết finding của reviewer")
         self.assertEqual(self.gate(snapshot), "release")
@@ -473,6 +513,23 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         snapshot = await flow_task.advance(self.task, None)  # resume after the crash
         self.assertEqual(self.gate(snapshot), "blocked")
         self.assertEqual(self.jobs().count("audit-A"), count + 1)
+
+    async def test_research_retry_uses_the_raised_job_timeout(self):
+        self.behaviors({"triage": "needs_research", "audit-A": "nonzero"})
+        await self.start(risk="P1")
+        snapshot = await self.decide(action="research", brief=flow_task.copy_brief(self.task, self.root / "inputs/brief.md"))
+        self.assertEqual(self.gate(snapshot), "blocked")
+        self.behaviors({"triage": "needs_research"})
+        seen = {}
+        original = runtime.worker
+
+        async def spy(*args, **kwargs):
+            seen[Path(args[2]).name] = kwargs["timeout"]
+            return await original(*args, **kwargs)
+
+        with patch.object(runtime, "worker", spy):
+            await self.decide(action="retry", timeout=777)
+        self.assertEqual(seen.get("audit-A"), 777)  # the retried research job, not the sealed 900
 
     async def test_unknown_research_skill_is_rejected_when_the_task_is_created(self):
         with self.assertRaisesRegex(ValueError, "Unknown installed skill"):
@@ -511,6 +568,153 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse([pid for pid in alive if Path(f"/proc/{pid}/cwd").exists()
                           and Path(f"/proc/{pid}/cwd").resolve() == self.root.resolve()])
 
+
+    async def test_decision_finding_stops_at_the_gate_at_once_with_a_plain_question(self):
+        self.behaviors({"prd-review-requirements-reviewer-1": "decision"})
+        snapshot = await self.start()  # P2 has no PRD gate, yet a decision only a person can make stops here
+        self.assertEqual(self.gate(snapshot), "prd")
+        self.assertNotIn("prd-draft-2", self.jobs())  # no drafting round spent guessing the answer
+        summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
+        self.assertIn("Flow dừng ở đây vì: reviewer cần người quyết 1 câu hỏi", summary)
+        self.assertIn("## Cần bạn quyết định", summary)
+        self.assertIn("### Q1. Phí tối thiểu cho giao dịch nhỏ là bao nhiêu?", summary)
+        self.assertIn("2. Phí tối thiểu 1.000 đồng", summary)
+        self.assertIn("AI soạn tài liệu đang chọn: Không có phí tối thiểu. 2 AI độc lập cùng ý kiến.", summary)
+        self.assertLess(summary.index("## Cần bạn quyết định"), summary.index("## Tóm tắt dễ đọc"))
+        with self.assertRaisesRegex(ValueError, "câu hỏi cho người quyết"):
+            await self.decide(action="approve")  # passing over the question would leave the AI's guess in force
+        self.assertIn(f"run_flow.py revise {self.task.id} --note 'Q1: chọn 1'", summary)
+        snapshot = await self.decide(action="revise", note="Q1: chọn 1, không có phí tối thiểu")
+        self.assertEqual(self.gate(snapshot), "release")
+        required = {f["id"] for f in self.packet_context("prd-draft-2", "codex")["findings_to_resolve"]}
+        self.assertEqual(required, {"requirements-reviewer/F1", "human/D1"})
+        self.assertEqual([(e["choice"], e["by"]) for e in snapshot.values["decision_log"]],
+                         [("chọn 1, không có phí tối thiểu", "person")])
+        log = (self.task.worktree / "docs/flow-decisions.md").read_text()
+        self.assertIn("| Phí tối thiểu cho giao dịch nhỏ là bao nhiêu? | chọn 1, không có phí tối thiểu | Người duyệt |", log)
+        self.assertIn("record decisions", workspace.git(self.task.worktree, "log", "--format=%s"))
+
+    async def test_baseline_failure_reaches_the_implementer_in_round_one(self):
+        snapshot = await self.start()  # the demo repo is test-first: its tests fail before any change
+        self.assertEqual(snapshot.values["baseline"]["status"], "failed")
+        self.assertEqual(self.gate(snapshot), "release")
+        context = self.packet_context("implement-1", "codex")
+        self.assertEqual(context["baseline_tests"]["status"], "failed")
+        self.assertIn("NotImplementedError", context["baseline_tests"]["tail"])
+        summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
+        self.assertIn("Test trên commit gốc, trước khi AI sửa: failed", summary)
+
+    async def test_test_command_that_cannot_run_stops_before_any_model_call(self):
+        snapshot = await self.start(test_command="/nonexistent/test-runner")
+        self.assertEqual(self.gate(snapshot), "blocked")
+        self.assertEqual(snapshot.values["blocked"]["node"], "baseline")
+        self.assertEqual(snapshot.interrupts[0].value["actions"], ["approve", "reject", "retry"])
+        self.assertEqual(self.calls(), [])
+        snapshot = await self.decide(action="retry")  # the command still cannot run: blocked again, still free
+        self.assertEqual(self.gate(snapshot), "blocked")
+        self.assertEqual(self.calls(), [])
+        snapshot = await self.decide(action="approve")  # go on without working tests
+        self.assertEqual(self.gate(snapshot), "release")
+        self.assertEqual(snapshot.values["tests"]["status"], "error")
+
+    def test_implement_lint_checks_this_round_edits_and_existing_tests(self):
+        from lab.flow.contracts import implement_lint
+        report = lambda changes=(), tests=(), dispositions=(): {
+            "changes": [{"file": f, "description": "d"} for f in changes],
+            "tests": [{"file": f, "covers": []} for f in tests],
+            "resolutions": [{"finding_id": f"F{n}", "disposition": d, "reason": "r"} for n, d in enumerate(dispositions)]}
+        tree = {"app.py", "tests/test_app.py"}
+        # A fix round that only touches config may cite tests written in round 1.
+        self.assertEqual(implement_lint(report(["phpunit.xml"], ["tests/test_app.py"], ["fixed"]),
+                                        ["phpunit.xml"], tree | {"phpunit.xml"}), [])
+        ids = lambda findings: [f["id"] for f in findings]
+        self.assertEqual(ids(implement_lint(report(["app.py"], ["tests/missing.py"]), ["other.py"], tree)),
+                         ["S-claim1", "S-claim2"])  # an edit not in the diff, a test that does not exist
+        self.assertEqual(ids(implement_lint(report(dispositions=["fixed"]), [], tree)), ["S-empty"])
+        self.assertEqual(ids(implement_lint(report(dispositions=["rejected"]), [], tree)), [])
+
+    async def test_status_shows_why_rounds_repeated_and_wait_returns_when_the_supervisor_stops(self):
+        self.behaviors({"implement-1": "buggy"})
+        snapshot = await self.start()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(run_flow.show(self.task, snapshot, details=True, timeline=True), 2)
+        text = out.getvalue()
+        for line in ("supervisor: not running", "  baseline tests on the base commit: failed",
+                     "  prd r1: review 0 blocker/major", "  implement r1: tests failed; review skipped (tests failed)",
+                     "  implement r2: tests passed; review 0 blocker/major", "timeline:"):
+            self.assertIn(line, text)
+        self.assertIn("implement-1", text.split("timeline:")[1])
+        # A live supervisor (here a stand-in whose command line names run_flow) makes wait block.
+        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)", "run_flow"])
+        self.addCleanup(sleeper.kill)
+        runtime.write_json(self.task.directory / "supervisor.json", {"pid": sleeper.pid, "command": "approve"})
+        with contextlib.redirect_stdout(io.StringIO()) as listed:
+            await run_flow.list_tasks(self.root)
+        self.assertIn("awaiting release", listed.getvalue())
+        with patch.object(runtime, "ROOT", self.root), contextlib.redirect_stdout(io.StringIO()) as waited:
+            code = await run_flow.run(run_flow.arguments(["wait", str(self.task.directory)]))
+        self.assertEqual(code, 2)
+        self.assertIsNotNone(sleeper.poll())  # wait returned only after the supervisor had exited
+        self.assertIn("supervisor: not running", waited.getvalue())
+
+    async def test_detached_supervisor_runs_in_its_own_session_and_reports_its_exit_code(self):
+        await self.start()
+        log = self.root / "detached.log"
+        child = run_flow.spawn_detached(["wait", str(self.task.directory)], log)
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        # Signals to our session or process group (a closed terminal, an ended assistant session) miss it.
+        self.assertNotEqual(os.getsid(child.pid), os.getsid(0))
+        self.assertNotEqual(os.getpgid(child.pid), os.getpgid(0))
+        buffer = io.BytesIO()
+        with patch.object(sys, "stdout", io.TextIOWrapper(buffer)):
+            code = run_flow.follow(child, log, interval=0.05)
+            sys.stdout.flush()
+            output = buffer.getvalue()
+        self.assertEqual(code, 2)
+        self.assertIn(b"awaiting human (release)", output)
+
+    async def test_blanket_ok_takes_recommendations_but_never_answers_a_critical_question(self):
+        self.behaviors({"prd-review-requirements-reviewer-1": "decisions"})
+        snapshot = await self.start()
+        summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
+        # Critical first; a one-option "question" is no choice and stays an ordinary finding.
+        self.assertLess(summary.index("### Q1. ⚠ Ai được hoàn phí khi giao dịch lỗi?"),
+                        summary.index("### Q2. Phí tối thiểu cho giao dịch nhỏ là bao nhiêu?"))
+        self.assertNotIn("Q3.", summary)
+        self.assertIn("**2 AI không thống nhất: nên đọc kỹ câu này.**", summary)
+        with self.assertRaisesRegex(ValueError, "Câu quan trọng phải được người trả lời riêng: Q1"):
+            await self.decide(action="revise", note="", accept=True)
+        snapshot = await self.decide(action="revise", note="Q1: chỉ quản trị viên", accept=True)
+        self.assertEqual(self.gate(snapshot), "release")
+        self.assertEqual([(e["finding"], e["by"]) for e in snapshot.values["decision_log"]],
+                         [("requirements-reviewer/F2", "person"),
+                          ("requirements-reviewer/F1", "accepted-ai-recommendation")])
+        human = next(f for f in self.packet_context("prd-draft-2", "codex")["findings_to_resolve"]
+                     if f["source"] == "human")
+        self.assertIn("Q2 (requirements-reviewer/F1): Chọn 1: giữ đúng 1,1% như request. (người duyệt chấp nhận đề xuất)",
+                      human["reason"])
+        log = (self.task.worktree / "docs/flow-decisions.md").read_text()
+        self.assertIn("| Người duyệt chấp nhận đề xuất AI |", log)
+        self.assertIn("| Chỉ quản trị viên |".lower(), log.lower())
+        self.assertIn("Các quyết định của task được ghi vào `docs/flow-decisions.md`",
+                      (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text())
+        with self.assertRaisesRegex(ValueError, "accept-recommendations"):
+            await self.decide(action="revise", note="", accept=True)  # the release gate has no questions
+
+    async def test_recorded_project_decisions_bind_later_tasks(self):
+        files = {"docs/flow-decisions.md": "# Quyết định của dự án\n\n| Phí tối thiểu | Không có | Người duyệt | |\n"}
+        with patch.dict(flow_task.DEMO_FILES, files):
+            await self.start()
+        self.assertIn("repo:docs/flow-decisions.md", [r["source"] for r in self.task.rules])
+        packet = (self.task.directory / "jobs/prd-review-requirements-reviewer-1/claude/INPUT.md").read_text()
+        self.assertIn("<<<RULE repo:docs/flow-decisions.md", packet)
+        self.assertIn("## Imported skill decision-review/SKILL.md", packet)  # reviewers weigh options critically
+
+    def test_revise_needs_a_note_unless_it_accepts_recommendations(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run_flow.arguments(["revise", "T"])
+        self.assertTrue(run_flow.arguments(["revise", "T", "--accept-recommendations"]).accept_recommendations)
 
 if __name__ == "__main__":
     unittest.main()

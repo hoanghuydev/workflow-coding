@@ -72,6 +72,7 @@ Models and effort for each persona: [docs/flow.md](docs/flow.md#danh-sách-perso
 
 ```mermaid
 flowchart LR
+    B[Baseline tests<br/>on the base commit] --> T
     T[Triage<br/>risk P0–P3] --> R[Research<br/>if needed]
     R --> P[PRD ⇄ review]
     T --> P
@@ -84,12 +85,31 @@ flowchart LR
 
 The risk tier decides how much process a task gets:
 
-| Risk | Typical work | PRD + techspec | Stops for you at | Code reviewers |
-| --- | --- | --- | --- | --- |
-| P0 | money, idempotency, authorization, merchant isolation | yes | PRD, techspec, release | 3 |
-| P1 | deploy, migration, integrations (default) | yes | PRD, techspec, release | 2 |
-| P2 | lists, filters, dashboards | yes | techspec, release | 1 |
-| P3 | demos, experiments | no | release | 1 |
+| Risk | Typical work | PRD + techspec | Code reviewers |
+| --- | --- | --- | --- |
+| P0 | money, idempotency, authorization, merchant isolation | yes | 3 |
+| P1 | deploy, migration, integrations (default) | yes | 2 |
+| P2 | lists, filters, dashboards | yes | 1 |
+| P3 | demos, experiments | no | 1 |
+
+Every tier stops for you at the release gate. A PRD or techspec stops for you only when
+it needs you: a reviewer marks a question as a business policy the request and the code
+don't settle, or blocker/major findings survive the round limit. Correctness, security
+and data problems are never questions; the AI fixes them. To review a document every
+time, add its gate to the tier in `config/flow.json` `gates`. Kind `design` always stops
+at the UX spec.
+
+Every document and gate starts with a one-screen summary in everyday words (what changes
+for users, the main flow, what is left out, what could go wrong) and the questions, if
+any: at most three, each with options, the reviewer's recommendation and whether the two
+AIs agree. The full PRD and techspec follow for whoever reviews in depth. "OK, as
+recommended" is a valid answer, except for questions marked ⚠ (money, data, permissions,
+irreversible), which you answer one by one.
+
+Answers and the AI's own assumptions go into `docs/flow-decisions.md` on the task branch,
+marked as chosen by you, accepted from the AI, or assumed by the AI. Once merged, later
+tasks read that file as a project rule, so the project doesn't drift from what was
+decided.
 
 You set a floor with `--risk`. Triage can raise it but never lower it, and you can change
 it at any gate. Kind `design` adds the UI reviewer on top of these counts.
@@ -97,7 +117,13 @@ it at any gate. Kind `design` adds the UI reviewer on top of these counts.
 When a reviewer raises a blocker or major finding, or the tests fail, the work goes back
 for another round (two rounds per document and two fix rounds by default, set in
 `config/flow.json`). Whatever is still open when the rounds run out is shown to you at the
-next gate.
+next gate. Reviewers only read a build that passed the tests: a red build goes straight
+back to the implementer, except in the last round, so you still get a review.
+
+Before any model call, the supervisor runs the test command on the base commit. Failing
+tests are normal for a bug or a test-first request and go to the implementer with the log.
+A command that cannot run at all (missing service, timeout) stops the task right there,
+before it has cost anything.
 
 ## Quick start
 
@@ -168,9 +194,9 @@ flow for you:
 >
 > **You:** Go ahead.
 >
-> **AI:** The flow is waiting at the techspec gate (5 of 40 model calls used). The
-> techspec touches 3 files and leaves the schema alone. The architecture-reviewer has one
-> open major finding: the empty state isn't handled. Approve, or ask for a revision?
+> **AI:** The flow stopped at the techspec gate (5 of 40 model calls used) because the
+> reviewer needs one decision: should an empty filter show every status, or none? It
+> recommends every status, which matches the current page. Which one?
 
 Coming back days later? Ask "which tasks are open?" and the assistant runs
 `run_flow.py list`.
@@ -215,19 +241,23 @@ on the /transactions page. Use the existing list endpoint. Don't change the DB s
 | `--rules` | Optional, repeatable. Extra rule files inside the target repo, e.g. `docs/conventions.md` |
 | `--skill` | Optional, repeatable. Skills for this task, from the project repo or the shared set |
 | `--max-calls` | Model call limit for the task (default 40) |
-| `--timeout` | Seconds per CLI job (default 900) |
+| `--timeout` | Seconds per CLI job (default 900). `config/flow.json` `timeouts` raises it per stage: implement 3600, reviews 1200 |
+| `--detach` | Run the supervisor in its own session and follow its log. If this command dies (closed terminal, ended assistant session), the jobs keep running: `run_flow.py wait <task-id>` |
 
 ### 3. Answer at a gate
 
 `start` runs until the first gate, then exits with code `2` and prints the file to read,
-e.g. `tasks/<task-id>/gates/techspec-r1.md`. That file sums up the document and the open
-findings and lists the reply commands:
+e.g. `tasks/<task-id>/gates/release-r1.md`. That file says why the flow stopped, sums up
+the work and the open findings, and lists the reply commands:
 
 ```bash
 .venv/bin/python run_flow.py list                                  # every task and what it waits for
-.venv/bin/python run_flow.py status  <task-id>                     # where one task is
+.venv/bin/python run_flow.py status  <task-id> [--timeline]        # where one task is, what runs now, why rounds repeated
+.venv/bin/python run_flow.py wait    <task-id>                     # block until a detached supervisor stops
 .venv/bin/python run_flow.py approve <task-id> [--note "..."]      # go ahead
 .venv/bin/python run_flow.py revise  <task-id> --note "Handle the empty state"
+.venv/bin/python run_flow.py revise  <task-id> --note "Q1: option 2"   # answer a gate's questions
+.venv/bin/python run_flow.py revise  <task-id> --accept-recommendations  # take the AI's picks (not for ⚠)
 .venv/bin/python run_flow.py reject  <task-id> --note "Not needed any more"
 .venv/bin/python run_flow.py approve <task-id> --risk P0           # change the tier from here on
 ```
@@ -241,10 +271,11 @@ Two special gates:
 | Gate | When | How to answer |
 | --- | --- | --- |
 | `research` | Triage needs outside facts the repo doesn't have | `research <id> --brief sources.md`, or `approve` to skip |
-| `blocked` | A model call failed, timed out, or hit `--max-calls` | Read the logs in `tasks/<id>/jobs/`, then `retry <id> [--max-calls 60] [--timeout 2700]` or `reject`. `approve` and `revise` also take `--timeout` when the next step is a large change |
+| `blocked` | A model call failed, timed out, or hit `--max-calls`; or the test command cannot run on the base commit | Read the logs in `tasks/<id>/jobs/` (or `tests/baseline.log`), then `retry <id> [--max-calls 60] [--timeout 2700]` or `reject`. A baseline block also accepts `approve` to go on without working tests. `approve` and `revise` also take `--timeout` when the next step is a large change |
 
-The flow never retries on its own. If your machine shuts down or you press Ctrl-C, run
-`run_flow.py resume <task-id>`: finished calls are reused, not paid for twice.
+The flow never retries a model call on its own. Run long commands with `--detach` so a
+closed terminal doesn't kill the jobs. If the supervisor itself stops (machine shutdown,
+Ctrl-C), run `run_flow.py resume <task-id>`: finished calls are reused, not paid for twice.
 
 ### 4. Get the result
 

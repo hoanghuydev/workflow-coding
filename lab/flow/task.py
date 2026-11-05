@@ -18,17 +18,19 @@ import sys
 from uuid import uuid4
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.types import Command
 
 from .. import contracts as research_contracts, pipeline, runtime
 from ..jobs import JobRunner
 from ..state import State, now
 from . import workspace
 from .config import check_roster, kind_config
-from .contracts import RISKS
+from .contracts import RISKS, check_decision
 from .graph import FlowContext, build_graph
 
 INLINE_LIMIT = 200_000  # bytes per rule file or skill inlined into every packet
-PROJECT_RULE_FILES = ("AGENTS.md", "CLAUDE.md")
+# docs/flow-decisions.md is the decision log earlier flow tasks merged into the project (see graph.record_decisions).
+PROJECT_RULE_FILES = ("AGENTS.md", "CLAUDE.md", "docs/flow-decisions.md")
 PROJECT_SKILL_DIRS = (".agents/skills", ".claude/skills")
 # Skills chosen with --skill guide the stages that read or write code; their scripts run only in implement.
 TASK_SKILL_STAGES = ("uxspec", "uxspec-review", "techspec", "techspec-review", "implement", "write-docs",
@@ -282,6 +284,10 @@ async def advance(task, payload=None, *, invoke=True):
     async with AsyncSqliteSaver.from_conn_string(str(task.directory / "checkpoints.db")) as saver:
         app = build_graph().compile(checkpointer=saver, name="work-flow")
         config = {"configurable": {"thread_id": task.id}}
+        if invoke and isinstance(payload, Command) and payload.resume is not None:
+            pending = (await app.aget_state(config)).interrupts
+            if pending:
+                check_decision(pending[0].value, payload.resume)
         if invoke:
             # durability="sync": every step is on disk before the next one starts.
             await app.ainvoke(payload, config, context=FlowContext(task), durability="sync")

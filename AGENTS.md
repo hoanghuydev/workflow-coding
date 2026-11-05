@@ -124,13 +124,16 @@ tells them to ignore it.
    - **Target repo** (`--repo`) and **base branch** (`--base`, usually `main`).
    - **Test command** (`--test`). Look in the target repo (Makefile, package.json,
      go.mod, CI config) and propose one. Tests run by the supervisor are the only test
-     evidence the flow trusts. Without `--test` the release gate shows tests as not run.
+     evidence the flow trusts, so include every suite you would otherwise run by hand
+     (integration tests too). Without `--test` the release gate shows tests as not run.
+     The supervisor runs it once on the base commit before any model call; a command
+     that cannot run stops the task there, at no cost.
      For `docs` or `content`, propose a command that checks the result: a docs or site
      build, a link check, an OpenAPI validation.
    - **Risk floor** (`--risk`). Propose one; triage can raise it but never lower it.
      P0: money, idempotency, authorization, merchant isolation. P1: deploy, migration,
      integrations (the default). P2: lists, filters, dashboards. P3: demos and
-     experiments. Higher tiers add documents, gates and reviewers.
+     experiments. Higher tiers add documents and reviewers.
    - **Sources** (`--brief`), only if the work depends on outside facts the repo lacks.
    - **Skills** (`--skill`, repeatable). Read the `SKILL.md` descriptions in the target
      repo's `.agents/skills/` and `.claude/skills/` and in this repo's `.agents/skills/`
@@ -147,7 +150,7 @@ tells them to ignore it.
 3. Start the task:
 
    ```bash
-   .venv/bin/python run_flow.py start --request requests/<file>.md --kind code \
+   .venv/bin/python run_flow.py start --detach --request requests/<file>.md --kind code \
      --repo <path> --base main --test "<command>" --risk P2
    ```
 
@@ -166,14 +169,21 @@ see the user's `~/.claude` or `~/.codex` files.
 
 `start`, `approve`, `revise`, `retry`, `research` and `resume` call models. Each one
 can take from a few minutes to over an hour, since every CLI job may run up to
-`--timeout` seconds (default 900).
+`--timeout` seconds (default 900, raised per stage by `timeouts` in `config/flow.json`:
+implement 3600, reviews 1200).
 
-- **How to run them.** Run in the background, or with a timeout of at least two
-  hours, and wait for the command to exit. Don't poll in a loop.
+- **How to run them.** Always pass `--detach` and run the command in the background (or
+  with a timeout of at least two hours), then wait for it to exit. Don't poll in a loop.
+  `--detach` runs the supervisor in its own session, so if your session ends the model
+  jobs keep running instead of being killed and paid for again.
 - **Don't interfere.** Don't kill a running command, and don't start a second command
   on the same task (a lock refuses it).
-- **If interrupted.** If your session ended or the process died, run `status <id>`
-  and then `resume <id>`. Finished model calls are reused, not paid twice.
+- **If interrupted.** If your session ended or the command died, run `status <id>`.
+  If it says `supervisor: running`, run `wait <id>` in the background: it exits like
+  the original command once the supervisor stops. Otherwise run `resume <id>`.
+  Finished model calls are reused, not paid twice.
+- **Progress.** `status <id>` shows the job running now and for how long, and one line
+  per round saying why the flow looped. `--timeline` lists every job and decision.
 - **Sandbox access.** These commands spawn `codex`, `claude` and `agy`, which need
   network access and write access to their home directories. If your sandbox blocks
   that, ask the user for permission instead of retrying.
@@ -182,8 +192,8 @@ can take from a few minutes to over an hour, since every CLI job may run up to
 | --- | --- | --- |
 | 0 | approved at the release gate | report the result (see "When it finishes") |
 | 2 | waiting at a gate | summarize the gate and ask the user |
-| 1 | rejected, or an error (`Flow error: ...` on stderr) | explain it |
-| 130 | interrupted | `status <id>`, then `resume <id>` |
+| 1 | rejected, or an error (`Flow error: ...` in the output) | explain it |
+| 130 | interrupted | `status <id>`, then `wait <id>` or `resume <id>` (see above) |
 
 At a gate, stdout ends with `awaiting human (<kind>): <gate file>` and
 `actions: <allowed commands>`.
@@ -195,21 +205,43 @@ Read the gate file first; it links the rest. Then read what the gate is about:
 | Gate | Also read |
 | --- | --- |
 | `research` | triage's open questions, in the gate file |
-| `prd` | `tasks/<id>/docs/prd.md` |
+| `prd` | `tasks/<id>/docs/prd.md`. Document gates appear only when needed; the gate file's first line says why |
 | `uxspec` | `tasks/<id>/docs/uxspec.md` (kind `design`), plus `prd.md` if the user has not seen it |
 | `techspec` | `tasks/<id>/docs/techspec.md`, plus `prd.md` if the user has not seen it |
 | `release` | the newest `tasks/<id>/tests/round-N.log` (its tail), and the diff: `git -C tasks/<id>/worktree diff <base_sha> HEAD` (`base_sha` is in `tasks/<id>/task.json`) |
-| `blocked` | `manifest.json` and `stderr.log` of the failed job under `tasks/<id>/jobs/` |
+| `blocked` | `manifest.json` and `stderr.log` of the failed job under `tasks/<id>/jobs/`; for node `baseline`, `tasks/<id>/tests/baseline.log` |
 
-Then tell the user, briefly:
+Then tell the user, in this order, and stop after part 2 unless they want more:
 
-- the stage, the risk tier, and model calls used against the limit (`status <id>`);
-- what the AI produced, in a few lines;
-- each open blocker or major finding in one line, with who raised it;
-- at the release gate: the test result, the files changed, and anything reviewers
-  marked `not_met` or `unverified`;
-- what deserves a close look, and your own recommendation, labelled as yours;
-- the actions this gate accepts.
+1. **The short version, for anyone.** From the gate file's "Flow dừng ở đây vì" and
+   "Tóm tắt dễ đọc": why the flow stopped, what will change for users, the main flow
+   and what could go wrong, in everyday words. No finding IDs, file names or jargon.
+2. **The questions,** if the gate file has "Cần bạn quyết định": at most three, ⚠
+   first. Each one: the question in one or two sentences a non-engineer can answer,
+   the options numbered with their consequence, the reviewer's recommendation, and
+   whether the two AIs agree. Ask them all at once.
+3. **The detail, for a technical reader or on request:** the stage, risk tier and
+   calls (`status <id>`), each open blocker or major finding in one line with who
+   raised it, at the release gate the test result, the files changed and anything
+   reviewers marked `not_met` or `unverified`, and the document paths for a full read.
+4. Your own recommendation, labelled as yours, and the actions this gate accepts.
+
+Rules for asking:
+
+- One gate per message, or one table line per gate followed by its questions. Never
+  a wall of text covering several tasks.
+- Never ask for one "ok" that approves business choices hidden in a long proposal.
+  What you or the AI settled goes one line each under "AI đã tự quyết", where the
+  user can overrule it.
+- Never invent a business value (a timeout, a limit, a fee) and present it as
+  settled. If you suggest one, say it is your guess.
+- A correctness, security or data-integrity problem is not a question for the user:
+  it is a finding the flow fixes. Don't turn it into a choice.
+- If the user answers "ok" or "as recommended", use `revise --accept-recommendations`.
+  For a ⚠ question, first restate its consequence in one sentence and get their
+  explicit choice; the flow refuses a blanket answer for it.
+- Match the user's depth: point a reader who checks documents to the files; never
+  make a user who doesn't read them open one.
 
 ## Turning the user's answer into a command
 
@@ -217,6 +249,8 @@ Then tell the user, briefly:
 | --- | --- |
 | to go ahead | `approve <id>`, with `--note "..."` for any guidance and `--risk Px` if they change the tier |
 | changes | `revise <id> --note "..."`: keep their wording and add section or file references. The next round must resolve the note as a blocker |
+| to answer the decision questions | `revise <id> --note "Q1: <their choice>; Q2: ..."`, in their words; the author updates the document. A plain `approve` is refused while questions are open |
+| to take the AI's recommendations | `revise <id> --accept-recommendations`, plus `--note "Qn: ..."` for every ⚠ question; the decision log records them as accepted, not chosen |
 | to stop | `reject <id> --note "<reason>"` |
 | to supply sources (research gate) | write a brief (format: `inputs/brief.md`), then `research <id> --brief <file>`. To skip research: `approve <id>` |
 | to retry after a block | explain the cause first, then `retry <id>`; add `--max-calls N` if the call limit was hit, `--timeout S` if a job timed out on a large change |
@@ -229,7 +263,8 @@ under "Long-running commands" and continue from its exit code.
 
 On exit 0, read `tasks/<id>/report.md` and tell the user:
 
-- the branch `flow/<id>` in the target repo, and its commits;
+- the branch `flow/<id>` in the target repo, and its commits, including the
+  `docs/flow-decisions.md` update: merged with the code, it binds later tasks;
 - the test result;
 - the document paths;
 - the model calls used.

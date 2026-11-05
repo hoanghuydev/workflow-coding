@@ -12,8 +12,18 @@ Read the repository only to understand current behaviour and vocabulary.
 For a defect report, state the observed and the expected behaviour, and make the
 reproduction an acceptance criterion that fails today.
 
-Do not invent business rules, limits, fees or policies; put each unknown in
-open_questions. Use research claims only with their stated status: verified,
+Fill brief for people who will not read the rest: what users will notice, the
+main flow in 3-6 steps, what is left out and what could still go wrong, in
+everyday words without IDs, code names or jargon. Record under assumptions each
+choice you settled yourself from the request, the rules or the code, or as a
+sensible reversible default, with the reason. Follow the recorded project
+decisions in the Rules section unless the request changes them.
+
+Do not invent business rules, limits, fees or policies; put each business policy
+the request leaves open in open_questions with the options you see and the one
+you would choose. A reviewer escalates the ones that matter to a person instead
+of you guessing. Never turn a requirement the request already implies into a
+question. Use research claims only with their stated status: verified,
 disputed or inconclusive. Treat research as AI analysis of a supplied packet,
 not as human-confirmed fact.
 

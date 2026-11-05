@@ -77,6 +77,12 @@ class State:
     def calls(self):
         return self.db.execute("SELECT COALESCE(SUM(attempts),0) FROM jobs").fetchone()[0]
 
+    def history(self):
+        """Every job with its last transition time, in planning order (for progress reports)."""
+        return [{"job": row[0], "worker": row[1], "status": row[2], "attempts": row[3],
+                 "metadata": json.loads(row[4]), "updated_at": row[5]}
+                for row in self.db.execute("SELECT id,worker,status,attempts,metadata,updated_at FROM jobs ORDER BY rowid")]
+
     def rows(self):
         return [{"job": row[0], "stage": row[1], "worker": row[2], "status": row[3],
                  "attempts": row[4], **json.loads(row[5])}

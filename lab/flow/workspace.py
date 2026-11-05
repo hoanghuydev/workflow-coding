@@ -62,6 +62,18 @@ def commit_all(worktree, message):
     return head(worktree)
 
 
+def commit_file(worktree, relative, text, message):
+    """Write one file and commit only that path, so a crashed attempt's leftovers are never swept in."""
+    path = worktree / relative
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    git(worktree, "add", "--", relative)
+    git(worktree, *COMMITTER, "commit", "-q", "-m", message, "--", relative)
+    return head(worktree)
+
+
 def changed_files(worktree, base, tip):
     # --no-renames lists both sides of a rename, so either name can be cited.
     return paths(git(worktree, "diff", "--name-only", "--no-renames", "-z", base, tip))
@@ -75,9 +87,13 @@ def diff_text(worktree, base, tip, limit):
     return data[:limit].decode("utf-8", errors="ignore"), True
 
 
+def tracked_files(worktree):
+    return set(paths(git(worktree, "ls-files", "-z")))
+
+
 def known_files(worktree, base, tip):
     """Files a review finding may cite: the current tree plus anything deleted in the diff."""
-    return set(paths(git(worktree, "ls-files", "-z"))) | set(changed_files(worktree, base, tip))
+    return tracked_files(worktree) | set(changed_files(worktree, base, tip))
 
 
 def log(worktree, base, tip):

@@ -8,6 +8,7 @@ PROTOCOLS = {"code-review", "qa", "docs-review", "content-review", "ui-review"} 
 DOC_STAGES = ("prd", "uxspec", "techspec")
 WRITE_PROTOCOLS = {"implement", "write-docs", "write-content"}
 ROLE_KEYS = {"triage", *DOC_STAGES, "implement", "code_review"}
+TIMEOUT_STAGES = {"implement", "review"}  # per-stage floors for the CLI job timeout, in seconds
 # A kind (code, design, docs, content) picks which documents run, extra gates, the writing
 # protocol and role overrides; anything it leaves out falls back to the code flow.
 DEFAULT_KIND = {"docs": ["prd", "techspec"], "gates": [], "implement_protocol": "implement", "roles": {}}
@@ -104,6 +105,13 @@ def check_roster(flow, personas, agents):
             reviewers = role(flow, kind, "code_review", risk)
             if not reviewers:
                 raise ValueError(f"{where} code_review.{risk} is empty")
+            # Several reviewers are only independent if they are not one model sampled several times.
+            models = {(personas[binding(r)[0]].get("runtime"),
+                       persona_cfg(personas[binding(r)[0]], agents, binding(r)[1])["model"])
+                      for r in reviewers if binding(r)[0] in personas and personas[binding(r)[0]].get("runtime") in agents}
+            if len(reviewers) > 1 and len(models) < 2:
+                raise ValueError(f"{where} code_review.{risk}: {len(reviewers)} reviewers all use {sorted(models)[0]}; "
+                                 "independent review needs at least two different runtime/model pairs")
             for reviewer in reviewers:
                 name = binding(reviewer)[0]
                 if persona(reviewer, f"{where} code_review.{risk}") == implementer:
@@ -119,4 +127,8 @@ def check_roster(flow, personas, agents):
     for key in ("max_calls", "max_doc_rounds", "max_fix_rounds", "diff_limit_bytes", "test_timeout"):
         if not isinstance(flow.get(key), int) or flow[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
+    timeouts = flow.get("timeouts", {})
+    if not isinstance(timeouts, dict) or set(timeouts) - TIMEOUT_STAGES or any(
+            not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in timeouts.values()):
+        raise ValueError(f"timeouts must map {', '.join(sorted(TIMEOUT_STAGES))} to positive seconds")
     return flow

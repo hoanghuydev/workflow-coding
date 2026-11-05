@@ -1,5 +1,5 @@
-"""Work flow: triage -> (research) -> documents <-> review -> implement -> tests
--> review <-> fix -> release gate -> finalize.
+"""Work flow: baseline tests -> triage -> (research) -> documents <-> review -> implement
+-> tests -> review <-> fix -> release gate -> finalize.
 
 The task's kind picks the documents (code: PRD, techspec; design: PRD, UX spec,
 techspec; docs and content: none), the writing protocol and the roles.
@@ -10,6 +10,11 @@ Invariants:
   completed jobs from the ledger instead of paying for them again.
 - Routing is decided by code from validated outputs: blocker/major findings,
   the supervisor's own test run and round limits. Model verdicts do not route.
+- Reviewers only see a build that passed the supervisor's tests, except in the last
+  allowed round, so the person at the release gate still gets a review.
+- A document stops at its gate when the tier requires it, when blocker/major findings
+  survive the round limit, or when a reviewer marks a finding as a decision only a
+  person can make.
 - Every risk tier ends at a human release gate. Nothing merges, pushes or deploys.
 - A failed job stops at a blocked gate. Retry is an explicit human decision bound
   to the attempt count at decision time, so it is never repeated implicitly.
@@ -31,6 +36,7 @@ from . import contracts as c, render, workspace
 from .config import DOC_STAGES, binding, kind_config, persona_cfg, role
 
 FAILED_TESTS = {"failed", "timeout", "error"}
+BROKEN_TESTS = {"timeout", "error"}  # the command itself cannot run; failing assertions are not "broken"
 
 
 class FlowState(TypedDict, total=False):
@@ -39,6 +45,7 @@ class FlowState(TypedDict, total=False):
     risk: str
     gates: list
     docs: bool
+    baseline: dict
     triage: dict
     research_brief: str
     research: dict
@@ -61,6 +68,7 @@ class FlowState(TypedDict, total=False):
     implementation: dict
     impl_lint: list
     tests: dict
+    review_skipped: bool
     code_findings: list
     acceptance: dict
     notes: dict
@@ -70,6 +78,7 @@ class FlowState(TypedDict, total=False):
     job_timeout: int
     blocked: Any
     decisions: Annotated[list, operator.add]
+    decision_log: Annotated[list, operator.add]
     status: str
 
 
@@ -106,12 +115,18 @@ def make_packet(task, protocol, job_id, persona_id, context):
     return text.encode("utf-8")
 
 
+def job_timeout(task, state, stage=None):
+    """Seconds for one CLI job: the person's --timeout (or the task's), raised to the stage's floor in
+    config/flow.json `timeouts`. A first implement round on a large change outlasts the default."""
+    chosen = state.get("job_timeout") or task.settings["timeout"]
+    return max(chosen, task.flow.get("timeouts", {}).get(stage, 0)) if stage else chosen
+
+
 async def call(task, state, *, job_id, protocol, ref, context, schema, validate, access="read",
-               before_start=None):
+               before_start=None, stage=None):
     persona_id, override = binding(ref)
     persona = task.personas[persona_id]
     task.runner.max_calls = state.get("max_calls") or task.settings["max_calls"]
-    task.runner.timeout = state.get("job_timeout") or task.settings["timeout"]
     row = task.state.get(job_id)
     # Retry only the attempt the human saw; a later failed attempt needs a new decision.
     retry = row is not None and state.get("retry", {}).get(job_id) == row["attempts"]
@@ -119,7 +134,8 @@ async def call(task, state, *, job_id, protocol, ref, context, schema, validate,
                                  make_packet(task, protocol, job_id, persona_id, context), schema, validate,
                                  cfg=persona_cfg(persona, task.agents, override), access=access, cwd=task.worktree,
                                  allow_bash=task.settings["allow_bash"] if access == "write" else (),
-                                 retry=retry, before_start=before_start)
+                                 retry=retry, before_start=before_start,
+                                 timeout=job_timeout(task, state, stage))
 
 
 def blocked(task, node, start):
@@ -175,7 +191,49 @@ def next_stage(state, doc):
     return f"{sequence[position]}_draft" if position < len(sequence) else "implement"
 
 
-# ---------------------------------------------------------------- triage / research
+# ---------------------------------------------------------------- baseline / triage / research
+
+async def supervisor_tests(task, name, sha, reuse=True, **extra):
+    """Run the task's test command in the worktree and keep the result under tests/<name>.{json,log}."""
+    result_path = task.directory / "tests" / f"{name}.json"
+    if reuse and result_path.is_file():
+        saved = lab_runtime.read_json(result_path)
+        if saved["sha"] == sha:
+            return saved
+    log_rel = f"tests/{name}.log"
+    argv = task.settings["test_command"]
+    if argv:
+        result = await workspace.run_tests(task.worktree, argv, task.flow["test_timeout"], task.directory / log_rel)
+    else:
+        result = {"status": "not_configured", "exit_code": None}
+    if workspace.dirty(task.worktree):  # tests must not leave edits that the next round would commit
+        workspace.archive_and_reset(task.worktree, task.directory / "tests" / f"{name}-dirty.patch")
+        result["left_changes"] = True
+    result.update(sha=sha, **extra, command=argv, log=log_rel if argv else None,
+                  tail=workspace.tail(task.directory / log_rel) if argv else "")
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    lab_runtime.write_json(result_path, result)
+    return result
+
+
+async def baseline(state, runtime: Runtime[FlowContext]):
+    """Run the test command on the base commit before any model call. Failing tests are normal for a bug
+    or a test-first request and go to the implementer; a command that cannot run stops here for free."""
+    task = runtime.context.task
+    saved = task.directory / "tests" / "baseline.json"
+    reuse = saved.is_file() and lab_runtime.read_json(saved)["status"] not in BROKEN_TESTS
+    result = await supervisor_tests(task, "baseline", task.settings["base_sha"], reuse=reuse)
+    if result["status"] in BROKEN_TESTS:
+        reason = (f"baseline: lệnh test {result['status']} trên commit gốc, trước khi AI sửa gì (log: tests/baseline.log). "
+                  "Thường do môi trường: thiếu service, image, biến môi trường. Chưa tốn lượt gọi model nào.")
+        return {"baseline": result, "blocked": {"node": "baseline", "reasons": [reason], "jobs": []},
+                "status": "blocked"}
+    return {"baseline": result, "blocked": None, "status": "running"}
+
+
+def route_baseline(state):
+    return "blocked_gate" if state.get("blocked") else "triage"
+
 
 async def triage(state, runtime: Runtime[FlowContext]):
     task = runtime.context.task
@@ -228,11 +286,11 @@ async def research(state, runtime: Runtime[FlowContext]):
         allowed = state.get("retry", {}).get("research") == research_calls(task)
         failed = len((state.get("blocked") or {}).get("reasons", [])) if allowed else 0
         code = await pipeline.run(task.root, resume=directory, retry_failed=allowed,
-                                  max_calls=meta["max_calls"] + failed)
+                                  max_calls=meta["max_calls"] + failed, timeout=job_timeout(task, state))
     else:
         try:
             prepared = pipeline.prepare(task.root, task.directory / state["research_brief"],
-                                        task.settings["timeout"], pipeline.DEFAULT_CALLS, task.settings["demo"],
+                                        job_timeout(task, state), pipeline.DEFAULT_CALLS, task.settings["demo"],
                                         task.settings["research_skills"], config=task.agents)
         except ValueError as exc:
             return {"blocked": {"node": "research", "reasons": [f"research: {exc}"], "jobs": ["research"]},
@@ -339,7 +397,7 @@ def review_node(doc):
                    "previous_findings": state.get(f"{doc}_findings", []) if round_ > 1 else []}
         results = await gather_all(
             call(task, state, job_id=f"{doc}-review-{persona}-{round_}", protocol=f"{doc}-review",
-                 ref=ref, context=context, schema=schema,
+                 ref=ref, context=context, schema=schema, stage="review",
                  validate=lambda o: c.validate_doc_review(o, targets))
             for persona, ref in zip(reviewers, refs))
         if any(result is None for result in results):
@@ -362,6 +420,8 @@ def review_router(doc):
         if state.get("blocked"):
             return "blocked_gate"
         unresolved = c.blocking(state[f"{doc}_findings"])
+        if c.decisions(unresolved):  # another draft would only guess the answer
+            return f"{doc}_gate"
         if unresolved and state[f"{doc}_round"] < state["limits"][doc]:
             return f"{doc}_draft"
         # Rounds exhausted with blocker/major findings: escalate even if the tier has no gate here.
@@ -375,18 +435,47 @@ def gate_node(doc):
     async def node(state, runtime: Runtime[FlowContext]):
         task = runtime.context.task
         round_ = state[f"{doc}_round"]
-        extra = render.doc_gate_extra(spec["title"], f"../docs/{doc}-r{round_}.md", state[f"{doc}_findings"],
-                                      state.get(f"{doc}_reviews", {}))
+        findings = state[f"{doc}_findings"]
+        unresolved, asks = c.blocking(findings), c.decisions(findings)
+        why = (f"reviewer cần người quyết {len(asks)} câu hỏi mà request, rule và repo không trả lời được"
+               if asks else f"sau {round_} vòng vẫn còn {len(unresolved)} finding blocker/major" if unresolved
+               else "mức rủi ro hoặc loại việc này luôn dừng để người duyệt tài liệu")
+        extra = render.doc_gate_extra(spec["title"], f"../docs/{doc}-r{round_}.md", findings,
+                                      state.get(f"{doc}_reviews", {}), why, task.id, state[doc])
         path = write(task, f"gates/{doc}-r{round_}.md", render.gate_md(doc, task.id, state, extra))
-        decision = interrupt({"kind": doc, "summary": path, "actions": ["approve", "revise", "reject"]})
+        decision = interrupt({"kind": doc, "summary": path, "actions": ["approve", "revise", "reject"],
+                              "questions": [{"critical": bool(f.get("critical"))} for f in asks]})
         action, note, update = decide(task, state, doc, decision, {"approve", "revise", "reject"})
         if action == "reject":
             return Command(goto="finalize", update={**update, "status": "rejected"})
+        # contracts.check_decision ran before the resume: approve is refused while questions are open, and an
+        # answer that leaves a question out never reaches this node.
         if action == "revise":
+            if asks:
+                entries, note = c.answer_decisions(asks, note, decision.get("accept"))
+                update["decision_log"] = [{**e, "stage": doc, "at": update["decisions"][0]["at"]} for e in entries]
+                update["decisions"][0]["note"] = note
             return Command(goto=f"{doc}_draft", update=revise_update(state, update, doc, doc, note, round_,
                                                                       task.flow["max_doc_rounds"]))
         return Command(goto=next_stage(state, doc), update=update)
     return node
+
+
+DECISIONS_FILE = "docs/flow-decisions.md"
+
+
+def record_decisions(task, state):
+    """Keep this task's section of the project's decision log on the branch, so it is merged with the code
+    and later tasks read it from their base commit as a project rule. Idempotent."""
+    rows = render.decision_rows(state)
+    if not rows:
+        return
+    path = task.worktree / DECISIONS_FILE
+    current = path.read_text(encoding="utf-8") if path.is_file() else render.DECISIONS_HEADER
+    title = next((line.strip().lstrip("#").strip() for line in task.request.splitlines() if line.strip()), task.id)
+    text = render.replace_section(current, task.id, render.decision_section(task.id, title, rows))
+    workspace.commit_file(task.worktree, DECISIONS_FILE, text, "\n".join([
+        f"flow({task.id}): record decisions", "", f"Flow-Task: {task.id}", "Flow-Job: supervisor"]))
 
 
 def decide(task, state, gate, decision, allowed):
@@ -394,7 +483,7 @@ def decide(task, state, gate, decision, allowed):
     if action not in allowed:
         raise ValueError(f"Gate {gate} accepts {sorted(allowed)}, got {action!r}")
     note = (decision.get("note") or "").strip()
-    if action == "revise" and not note:
+    if action == "revise" and not note and not decision.get("accept"):
         raise ValueError("revise needs a note describing the change")
     record = {"gate": gate, "action": action, "note": note, "at": now()}
     update = {"decisions": [record]}
@@ -438,6 +527,12 @@ async def implement(state, runtime: Runtime[FlowContext]):
                "findings_to_resolve": required, "other_findings": [f for f in previous if f["severity"] == "minor"],
                "tests": {k: tests.get(k) for k in ("status", "exit_code", "command", "tail")} if tests else None,
                "test_command": task.settings["test_command"], "human_guidance": guidance(state)}
+    base_tests = state.get("baseline")
+    if round_ == 1 and base_tests and base_tests["status"] not in {"passed", "not_configured"}:
+        context["baseline_tests"] = {k: base_tests.get(k) for k in ("status", "exit_code", "command", "tail")}
+
+    if round_ == 1:
+        record_decisions(task, state)
 
     def before_start():
         if workspace.dirty(task.worktree):
@@ -446,7 +541,7 @@ async def implement(state, runtime: Runtime[FlowContext]):
 
     out = await call(task, state, job_id=f"implement-{round_}",
                      protocol=kind_config(task.flow, kind_of(task))["implement_protocol"], ref=ref,
-                     context=context, access="write", before_start=before_start,
+                     context=context, access="write", before_start=before_start, stage="implement",
                      schema=c.restrict(c.IMPLEMENT, ("resolutions", "[]", "finding_id"), required_ids),
                      validate=lambda o: c.validate_implement(o, required_ids))
     if out is None:
@@ -458,10 +553,12 @@ async def implement(state, runtime: Runtime[FlowContext]):
         f"Flow-Task: {task.id}", f"Flow-Job: implement-{round_}", f"Flow-Persona: {persona_id}",
         f"Flow-Runtime: {persona['runtime']}/{cfg['model']}"]))
     tip = workspace.head(task.worktree)
-    changed = workspace.changed_files(task.worktree, round_base, tip)
+    # The supervisor's decision-log commit sits under round 1; it is not the implementer's edit.
+    changed = [f for f in workspace.changed_files(task.worktree, round_base, tip) if f != DECISIONS_FILE]
     manifest = lab_runtime.read_json(task.directory / "jobs" / f"implement-{round_}" / persona["runtime"] /
                                      "manifest.json")
-    return {"impl_round": round_, "impl_lint": c.implement_lint(out, changed), "notes": without_notes(state, "code"),
+    lint = c.implement_lint(out, changed, workspace.tracked_files(task.worktree))
+    return {"impl_round": round_, "impl_lint": lint, "notes": without_notes(state, "code"),
             "blocked": None, "status": "running",
             "implementation": {**out, "persona": persona_id, "branch": task.settings["branch"], "head": tip,
                                "round_base": round_base, "changed_files": changed,
@@ -476,25 +573,20 @@ def route_implement(state):
 async def run_tests(state, runtime: Runtime[FlowContext]):
     task = runtime.context.task
     round_ = state["impl_round"]
-    tip = state["implementation"]["head"]
-    result_path = task.directory / "tests" / f"round-{round_}.json"
-    if result_path.is_file():
-        saved = lab_runtime.read_json(result_path)
-        if saved["sha"] == tip:
-            return {"tests": saved}
-    log_rel = f"tests/round-{round_}.log"
-    argv = task.settings["test_command"]
-    if argv:
-        result = await workspace.run_tests(task.worktree, argv, task.flow["test_timeout"], task.directory / log_rel)
-    else:
-        result = {"status": "not_configured", "exit_code": None}
-    if workspace.dirty(task.worktree):  # tests must not leave edits that the next round would commit
-        workspace.archive_and_reset(task.worktree, task.directory / "tests" / f"round-{round_}-dirty.patch")
-        result["left_changes"] = True
-    result.update(sha=tip, round=round_, command=argv, log=log_rel if argv else None,
-                  tail=workspace.tail(task.directory / log_rel) if argv else "")
-    lab_runtime.write_json(result_path, result)
-    return {"tests": result}
+    result = await supervisor_tests(task, f"round-{round_}", state["implementation"]["head"], round=round_)
+    if skip_review({**state, "tests": result}):
+        # No review call on a red build: this round's findings are the supervisor's own checks.
+        return {"tests": result, "review_skipped": True, "acceptance": {},
+                "code_findings": c.tag(state["impl_lint"], "supervisor")}
+    return {"tests": result, "review_skipped": False}
+
+
+def skip_review(state):
+    return state["tests"]["status"] in FAILED_TESTS and state["impl_round"] < state["limits"]["implement"]
+
+
+def route_tests(state):
+    return "implement" if skip_review(state) else "code_review"
 
 
 async def code_review(state, runtime: Runtime[FlowContext]):
@@ -522,7 +614,8 @@ async def code_review(state, runtime: Runtime[FlowContext]):
     results = await gather_all(
         call(task, state, job_id=f"code-review-{persona}-{round_}",
              protocol=task.personas[persona].get("protocol", "code-review"), ref=ref,
-             context=context, schema=schema, validate=lambda o: c.validate_code_review(o, criteria, files))
+             context=context, schema=schema, stage="review",
+             validate=lambda o: c.validate_code_review(o, criteria, files))
         for persona, ref in zip(reviewers, refs))
     if any(result is None for result in results):
         return blocked(task, "code_review", start)
@@ -575,22 +668,23 @@ async def blocked_gate(state, runtime: Runtime[FlowContext]):
              "trước khi retry; flow không tự retry.", ""]
     path = write(task, f"gates/blocked-{len(state.get('decisions', [])) + 1}.md",
                  render.gate_md("blocked", task.id, state, extra))
-    allowed = {"retry", "reject"} | ({"approve"} if info["node"] == "research" else set())
+    # Approve continues past an incomplete research run or a test command that cannot run on the base.
+    allowed = {"retry", "reject"} | ({"approve"} if info["node"] in {"research", "baseline"} else set())
     decision = interrupt({"kind": "blocked", "summary": path, "node": info["node"], "actions": sorted(allowed)})
     action, _, update = decide(task, state, "blocked", decision, allowed)
     if action == "reject":
         return Command(goto="finalize", update={**update, "status": "rejected"})
     if action == "approve":
-        return Command(goto=docs_entry(state), update={**update, "blocked": None, "status": "running"})
+        target = "triage" if info["node"] == "baseline" else docs_entry(state)
+        return Command(goto=target, update={**update, "blocked": None, "status": "running"})
     if info["node"] == "research":
         grants = {"research": research_calls(task)}
     else:
         grants = {job: (task.state.get(job) or {}).get("attempts", 0) for job in info["jobs"]}
     # Keep `blocked` until the node runs again: the research node reads its reasons.
+    # decide() already carried a --timeout into update; job_timeout() falls back to the task's own.
     return Command(goto=info["node"], update={**update, "retry": grants, "status": "running",
-                                              "max_calls": decision.get("max_calls") or limit,
-                                              "job_timeout": (decision.get("timeout") or state.get("job_timeout")
-                                                              or task.settings["timeout"])})
+                                              "max_calls": decision.get("max_calls") or limit})
 
 
 async def finalize(state, runtime: Runtime[FlowContext]):
@@ -603,7 +697,9 @@ async def finalize(state, runtime: Runtime[FlowContext]):
 def build_graph():
     graph = StateGraph(FlowState, context_schema=FlowContext)
     drafts = [f"{doc}_draft" for doc in DOCS]
-    work = ["triage", "research", *drafts, *[f"{doc}_review" for doc in DOCS], "implement", "code_review"]
+    work = ["baseline", "triage", "research", *drafts, *[f"{doc}_review" for doc in DOCS], "implement",
+            "code_review"]
+    graph.add_node("baseline", baseline)
     graph.add_node("triage", triage)
     graph.add_node("research_gate", research_gate, destinations=("research", *drafts, "implement", "finalize"))
     graph.add_node("research", research)
@@ -618,7 +714,8 @@ def build_graph():
     graph.add_node("blocked_gate", blocked_gate, destinations=(*work, "finalize"))
     graph.add_node("finalize", finalize)
 
-    graph.add_edge(START, "triage")
+    graph.add_edge(START, "baseline")
+    graph.add_conditional_edges("baseline", route_baseline, ["blocked_gate", "triage"])
     graph.add_conditional_edges("triage", route_triage,
                                 ["blocked_gate", "research", "research_gate", *drafts, "implement"])
     graph.add_conditional_edges("research", route_research, ["blocked_gate", *drafts, "implement"])
@@ -627,7 +724,7 @@ def build_graph():
         graph.add_conditional_edges(f"{doc}_review", review_router(doc),
                                     ["blocked_gate", *drafts, f"{doc}_gate", "implement"])
     graph.add_conditional_edges("implement", route_implement, ["blocked_gate", "run_tests"])
-    graph.add_edge("run_tests", "code_review")
+    graph.add_conditional_edges("run_tests", route_tests, ["implement", "code_review"])
     graph.add_conditional_edges("code_review", route_code_review, ["blocked_gate", "implement", "release_gate"])
     graph.add_edge("finalize", END)
     return graph

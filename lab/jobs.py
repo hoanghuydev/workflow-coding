@@ -51,11 +51,13 @@ class JobRunner:
         self.blockers = []
 
     async def run(self, job_id, stage, worker, packet, schema, validate, *, cfg=None,
-                  access="packet", cwd=None, allow_bash=(), retry=None, before_start=None):
-        """Return the validated report, or None after recording a blocker."""
+                  access="packet", cwd=None, allow_bash=(), retry=None, before_start=None, timeout=None):
+        """Return the validated report, or None after recording a blocker. `timeout` overrides the
+        runner's default for this job only (stages differ: an implement round outlasts a review)."""
         cfg = cfg or self.config[worker]
+        timeout = self.timeout if timeout is None else timeout
         retry = self.retry_failed if retry is None else retry
-        runtime.cli_args(worker, cfg, self.directory, self.directory, schema, self.timeout, access)  # fail before counting a call
+        runtime.cli_args(worker, cfg, self.directory, self.directory, schema, timeout, access)  # fail before counting a call
         base = self.directory / "jobs" / job_id
         self.state.plan(job_id, stage, worker)
         previous = self.state.get(job_id)
@@ -122,7 +124,7 @@ class JobRunner:
         print(f"start {job_id}: {worker}", flush=True)
         try:
             meta = await runtime.worker(worker, cfg, base, schema, packet=packet, validate_output=validate,
-                                        timeout=self.timeout, access=access, cwd=cwd, allow_bash=allow_bash,
+                                        timeout=timeout, access=access, cwd=cwd, allow_bash=allow_bash,
                                         on_started=lambda metadata: self.state.save(job_id, metadata))
         except asyncio.CancelledError:
             if manifest_path.is_file():

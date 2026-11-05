@@ -12,6 +12,10 @@ for labels, empty states and errors, keyboard and screen-reader use, and how the
 layout works on a narrow screen. For each open interaction choice, record the
 options, your choice and the reason in decisions.
 
+Fill brief in everyday words for people who will not read the rest: what users
+will notice, the main journey in 3-6 steps, what is left out and what could
+still go wrong.
+
 Do not invent business rules, permissions or data the PRD does not define; put
 them in open_questions. Resolve findings_to_resolve as in the PRD protocol: one
 resolution per finding ID, fixed or rejected with a concrete reason; human

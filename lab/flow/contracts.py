@@ -7,6 +7,7 @@ become supervisor findings, so reviewers and the human gate see them without
 burning a call on a rejected output.
 """
 import copy
+import re
 
 from ..contracts import TEXT, array, exact_coverage, nonblank, obj
 
@@ -31,6 +32,26 @@ WHEN = described("The action or event under test only. Never the expected outcom
 THEN = described("Required and non-empty. The observable expected outcome a test or a person checks. "
                  "Do not repeat it in `when`.")
 RESOLUTION = obj({"finding_id": TEXT, "disposition": enum("fixed", "rejected"), "reason": TEXT})
+
+
+def plain(text):
+    return {**array(TEXT), "description": text + " Everyday words a non-engineer understands: no IDs, code names, "
+                                                 "file paths or jargon."}
+
+
+# The short layer every person reads; the rest of the document is for whoever reviews in depth.
+DOC_BRIEF = {**obj({"what_changes": plain("What users or the business will notice after this work, one item per line."),
+                    "main_flow": plain("The main flow after the change as 3-6 ordered steps."),
+                    "not_doing": plain("What this work deliberately leaves out."),
+                    "risks": plain("What could still go wrong for users or the business.")}),
+             "description": "A one-screen summary that matches the document; it must not hide or soften a risk."}
+ASSUMPTIONS = {**array(obj({"question": TEXT, "choice": TEXT, "reason": TEXT})), "description": (
+    "Choices you settled yourself because the request, rules or code settle them, or because a sensible, "
+    "reversible default exists (a timeout, wording, placement). One item each; a person may overrule them. "
+    "A business policy the request leaves open (fees, limits, who may do what, scope) belongs in open_questions.")}
+IMPLEMENT_BRIEF = obj({"what_changed": plain("What users will notice now, one item per line."),
+                       "how_to_check": plain("3-5 steps a person can follow in the running product to see it work."),
+                       "known_limits": plain("What is still not handled or not verified.")})
 TRIAGE = obj({"summary": TEXT, "risk": enum(*RISKS), "risk_reason": TEXT, "needs_research": BOOL,
               "research_questions": array(TEXT), "affected_areas": array(TEXT), "open_questions": array(TEXT)})
 PRD = obj({"title": TEXT, "summary": TEXT, "problem": TEXT, "goals": array(TEXT), "non_goals": array(TEXT),
@@ -38,7 +59,8 @@ PRD = obj({"title": TEXT, "summary": TEXT, "problem": TEXT, "goals": array(TEXT)
            "requirements": array(obj({"id": TEXT, "text": TEXT, "priority": enum("must", "should", "could")})),
            "acceptance_criteria": array(obj({"id": TEXT, "requirement_ids": array(TEXT),
                                              "given": GIVEN, "when": WHEN, "then": THEN})),
-           "risks": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
+           "risks": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION),
+           "brief": DOC_BRIEF, "assumptions": ASSUMPTIONS})
 TECHSPEC = obj({"summary": TEXT, "approach": TEXT,
                 "components": array(obj({"name": TEXT, "change": TEXT, "files": array(TEXT)})),
                 "data_changes": array(TEXT), "api_changes": array(TEXT), "invariants": array(TEXT),
@@ -46,7 +68,8 @@ TECHSPEC = obj({"summary": TEXT, "approach": TEXT,
                 "test_plan": array(obj({"id": TEXT, "covers": array(TEXT),
                                         "level": enum("unit", "integration", "e2e", "manual"), "description": TEXT})),
                 "tasks": array(obj({"id": TEXT, "title": TEXT, "description": TEXT, "files": array(TEXT)})),
-                "rollout": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
+                "rollout": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION),
+                "brief": DOC_BRIEF, "assumptions": ASSUMPTIONS})
 UX_STATES = ("loading", "empty", "error", "permission", "success", "partial")
 UXSPEC = obj({"summary": TEXT, "users": array(TEXT),
               "journeys": array(obj({"id": TEXT, "goal": TEXT, "steps": array(TEXT), "covers": array(TEXT)})),
@@ -55,16 +78,34 @@ UXSPEC = obj({"summary": TEXT, "users": array(TEXT),
               "copy": array(obj({"key": TEXT, "text": TEXT})),
               "accessibility": array(TEXT), "responsive": array(TEXT),
               "decisions": array(obj({"question": TEXT, "options": array(TEXT), "choice": TEXT, "reason": TEXT})),
-              "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
+              "open_questions": array(TEXT), "resolutions": array(RESOLUTION), "brief": DOC_BRIEF})
+# A finding the author cannot fix without inventing a business or product rule goes to a person at once:
+# another drafting round would only guess, and the next review would flag the guess.
+NEEDS_DECISION = {**BOOL, "description": (
+    "True only for a business or product policy that the request, rules and repository leave open and on which "
+    "two reasonable product owners could choose differently (fees, limits, who may do what, scope). Never for "
+    "correctness, safety, security or data integrity, nor for anything the request's goal, a rule or an "
+    "invariant already settles: those are ordinary findings the author fixes. Never for a reversible detail "
+    "with a sensible default: the author picks it as an assumption. When true, write `reason` as the question "
+    "in everyday words, list the choices in `options` and put the recommended choice and why in `suggestion`.")}
+OPTIONS = {**array(TEXT), "description": ("Two to four choices when needs_decision is true, each acceptable for the "
+                                          "product and stated with its consequence for users; empty otherwise.")}
+CRITICAL = {**BOOL, "description": "With needs_decision: a wrong choice loses money, exposes data or permissions, or "
+                                   "cannot be undone. False otherwise."}
+AUTHOR_CHOICE = {**TEXT, "description": "With needs_decision: what the document currently chooses or assumes for this "
+                                        "question, empty if it says nothing."}
+AGREES = {**BOOL, "description": "With needs_decision: true when your recommendation matches author_choice."}
 DOC_REVIEW = obj({"summary": TEXT, "findings": array(obj({
-    "id": TEXT, "target": TEXT, "severity": enum(*SEVERITIES), "reason": TEXT, "suggestion": TEXT})),
+    "id": TEXT, "target": TEXT, "severity": enum(*SEVERITIES), "reason": TEXT, "suggestion": TEXT,
+    "needs_decision": NEEDS_DECISION, "options": OPTIONS, "critical": CRITICAL, "author_choice": AUTHOR_CHOICE,
+    "agrees_with_author": AGREES})),
     "limitations": array(TEXT)})
 IMPLEMENT = obj({"summary": TEXT, "changes": array(obj({"file": TEXT, "description": TEXT})),
                  "tests": array(obj({"file": TEXT, "covers": array(TEXT)})),
                  "commands_run": array(obj({"command": TEXT, "exit_code": INT, "note": TEXT})),
                  "resolutions": array(obj({"finding_id": TEXT, "disposition": enum("fixed", "rejected", "deferred"),
                                            "reason": TEXT})),
-                 "open_questions": array(TEXT)})
+                 "open_questions": array(TEXT), "brief": IMPLEMENT_BRIEF})
 CODE_REVIEW = obj({"summary": TEXT, "findings": array(obj({
     "id": TEXT, "severity": enum(*SEVERITIES),
     "kind": enum("correctness", "security", "payment-invariant", "data-integrity", "test-gap",
@@ -76,11 +117,11 @@ CODE_REVIEW = obj({"summary": TEXT, "findings": array(obj({
 SCHEMAS = {"triage": TRIAGE, "prd": PRD, "techspec": TECHSPEC, "uxspec": UXSPEC, "doc-review": DOC_REVIEW,
            "implement": IMPLEMENT, "code-review": CODE_REVIEW}
 
-PRD_SECTIONS = ["overall", "problem", "goals", "non_goals", "users", "risks", "open_questions"]
-UXSPEC_SECTIONS = ["overall", "users", "components", "copy", "accessibility", "responsive", "decisions",
+PRD_SECTIONS = ["overall", "brief", "assumptions", "problem", "goals", "non_goals", "users", "risks", "open_questions"]
+UXSPEC_SECTIONS = ["overall", "brief", "users", "components", "copy", "accessibility", "responsive", "decisions",
                    "open_questions"]
-TECHSPEC_SECTIONS = ["overall", "approach", "components", "data_changes", "api_changes", "invariants",
-                     "failure_modes", "test_plan", "tasks", "rollout", "open_questions"]
+TECHSPEC_SECTIONS = ["overall", "brief", "assumptions", "approach", "components", "data_changes", "api_changes",
+                     "invariants", "failure_modes", "test_plan", "tasks", "rollout", "open_questions"]
 
 
 def restrict(schema, path, values):
@@ -159,12 +200,22 @@ def validate_prd(prd, required):
     check_resolutions(prd["resolutions"], required)
 
 
+def brief_lint(doc):
+    """The short layer is what most people read: an empty one is visible, but not worth another round."""
+    brief = doc.get("brief") or {}
+    if brief.get("what_changes") and brief.get("main_flow"):
+        return []
+    return [{"id": "S-brief", "target": "brief", "severity": "minor",
+             "reason": "Thiếu tóm tắt dễ đọc (thay đổi người dùng thấy hoặc luồng chính).",
+             "suggestion": "Viết brief bằng lời thường cho người không rành kỹ thuật."}]
+
+
 def prd_lint(prd):
     covered = {rid for a in prd["acceptance_criteria"] for rid in a["requirement_ids"]}
     return [{"id": f"S-{r['id']}", "target": r["id"], "severity": "major",
              "reason": "Requirement 'must' chưa có acceptance criterion nào kiểm được.",
              "suggestion": "Thêm acceptance criterion Given/When/Then cho requirement này."}
-            for r in prd["requirements"] if r["priority"] == "must" and r["id"] not in covered]
+            for r in prd["requirements"] if r["priority"] == "must" and r["id"] not in covered] + brief_lint(prd)
 
 
 def validate_techspec(spec, prd, required):
@@ -193,7 +244,7 @@ def techspec_lint(spec, prd):
     if not spec["tasks"]:
         findings.append({"id": "S-tasks", "target": "tasks", "severity": "major",
                          "reason": "Techspec chưa chia task triển khai.", "suggestion": "Liệt kê task và file dự kiến."})
-    return findings
+    return findings + brief_lint(spec)
 
 
 def validate_uxspec(spec, prd, required):
@@ -230,7 +281,7 @@ def uxspec_lint(spec, prd):
         findings.append({"id": "S-a11y", "target": "accessibility", "severity": "major",
                          "reason": "Đặc tả chưa có yêu cầu accessibility.",
                          "suggestion": "Nêu cách dùng bằng bàn phím, nhãn cho trình đọc màn hình và độ tương phản."})
-    return findings
+    return findings + brief_lint(spec)
 
 
 def validate_doc_review(review, targets):
@@ -250,19 +301,24 @@ def validate_implement(out, required):
         nonblank(resolution["reason"])
 
 
-def implement_lint(out, changed):
-    """Compare the implementer's claims with the actual diff of this round."""
-    changed = set(changed)
+def implement_lint(out, changed, tree):
+    """Compare the implementer's claims with the real diff of this round (`changed`) and the files at the
+    new tip (`tree`). `tests` names the tests that cover the work, which may come from an earlier round,
+    so a test file only has to exist; `changes` claims an edit in this round, so it must be in the diff."""
+    changed, tree = set(changed), set(tree)
     findings = []
-    if not changed:
+    claims_fix = not out["resolutions"] or any(r["disposition"] == "fixed" for r in out["resolutions"])
+    if not changed and claims_fix:  # rejecting every finding with evidence needs no edit
         findings.append({"id": "S-empty", "severity": "blocker", "kind": "spec-mismatch", "file": "", "line": 0,
                          "reason": "Vòng implement không tạo thay đổi nào trong worktree.",
                          "suggestion": "Triển khai thay đổi hoặc nêu rõ vì sao không cần sửa code."})
-    claimed = {c["file"] for c in out["changes"]} | {t["file"] for t in out["tests"]}
-    for index, file in enumerate(sorted(claimed - changed), 1):
+    unchanged = sorted({c["file"] for c in out["changes"]} - changed)
+    missing = sorted({t["file"] for t in out["tests"]} - tree - changed)
+    for index, (file, reason) in enumerate(
+            [(f, f"Báo cáo implement nêu đã sửa {f} nhưng diff vòng này không có file đó.") for f in unchanged]
+            + [(f, f"Báo cáo implement nêu test {f} nhưng file này không có trong worktree.") for f in missing], 1):
         findings.append({"id": f"S-claim{index}", "severity": "major", "kind": "spec-mismatch", "file": "",
-                         "line": 0, "reason": f"Báo cáo implement nêu đã sửa {file} nhưng diff vòng này không có file đó.",
-                         "suggestion": "Đối chiếu báo cáo với diff thực tế."})
+                         "line": 0, "reason": reason, "suggestion": "Đối chiếu báo cáo với diff thực tế."})
     return findings
 
 
@@ -288,6 +344,67 @@ def tag(findings, source):
 
 def blocking(findings):
     return [f for f in findings if f["severity"] in BLOCKING]
+
+
+def decisions(findings):
+    """Blocking findings that only a person can settle, critical ones first, numbered Q1.. in this order.
+    A "question" with fewer than two options is no choice: it stays an ordinary finding the author fixes.
+    Documents reviewed before these fields existed have none."""
+    asks = [f for f in blocking(findings) if f.get("needs_decision") and len(f.get("options") or []) >= 2]
+    return sorted(asks, key=lambda f: not f.get("critical"))
+
+
+def parse_answers(note):
+    """'Q2: chỉ quản trị viên; Q1: chọn 1' -> {2: 'chỉ quản trị viên', 1: 'chọn 1'}."""
+    parts = re.split(r"\bQ(\d+)\s*[:.)\-]", note or "")
+    return {int(number): text.strip(" ;,\n") for number, text in zip(parts[1::2], parts[2::2])}
+
+
+def check_answers(critical, note, accept):
+    """`critical` holds one flag per question Q1..Qn. Return the questions the note leaves to
+    --accept-recommendations, or raise when a question is left unanswered."""
+    answers = parse_answers(note)
+    missing = [n for n in range(1, len(critical) + 1) if n not in answers]
+    left = [n for n in missing if critical[n - 1]]
+    if left:
+        raise ValueError("Câu quan trọng phải được người trả lời riêng: "
+                         + ", ".join(f"Q{n}" for n in left) + " (ghi 'Qn: <lựa chọn>' trong --note)")
+    if missing and not accept:
+        raise ValueError("Chưa trả lời " + ", ".join(f"Q{n}" for n in missing)
+                         + ": ghi 'Qn: <lựa chọn>' trong --note hoặc thêm --accept-recommendations")
+    return missing
+
+
+def check_decision(gate, decision):
+    """Validate a person's answer before the graph resumes. An error raised inside a resumed node would leave
+    that answer recorded at the interrupt, so a corrected answer could never get through."""
+    action, note = decision.get("action"), (decision.get("note") or "").strip()
+    accept, questions = decision.get("accept"), gate.get("questions", [])
+    if action not in gate["actions"]:
+        raise ValueError(f"Gate {gate['kind']} accepts: {', '.join(gate['actions'])}")
+    if accept and (action != "revise" or not questions):
+        raise ValueError("--accept-recommendations chỉ dùng với revise ở cổng tài liệu có câu hỏi")
+    if action == "revise" and not note and not accept:
+        raise ValueError("revise needs a note describing the change")
+    if questions and action == "approve":
+        raise ValueError(f"Cổng này có {len(questions)} câu hỏi cho người quyết: trả lời bằng revise --note "
+                         "'Q1: ...' hoặc revise --accept-recommendations")
+    if questions and action == "revise":
+        check_answers([q["critical"] for q in questions], note, accept)
+
+
+def answer_decisions(asks, note, accept):
+    """Map a revise note to each question. "Q2: ..." answers Q2; --accept-recommendations takes the reviewer's
+    recommendation for the rest, except critical questions, which a person must answer by number."""
+    missing = check_answers([bool(f.get("critical")) for f in asks], note, accept)
+    answers = parse_answers(note)
+    entries = [{"question": f["reason"], "options": f.get("options", []), "critical": bool(f.get("critical")),
+                "choice": answers.get(n) or f["suggestion"],
+                "by": "person" if n in answers else "accepted-ai-recommendation", "finding": f["id"]}
+               for n, f in enumerate(asks, 1)]
+    lines = [f"Q{n} ({e['finding']}): {e['choice']}" + ("" if e["by"] == "person" else " (người duyệt chấp nhận đề xuất)")
+             for n, e in enumerate(entries, 1)]
+    return entries, "\n".join(filter(None, [note.strip(), *([] if not missing else lines)]))
 
 
 def acceptance_findings(source, acceptance):

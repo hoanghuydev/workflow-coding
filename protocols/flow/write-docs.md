@@ -14,3 +14,5 @@ The supervisor commits your work and runs the test command, if any, itself.
 List every changed file in changes; tests may be empty. When findings_to_resolve
 is non-empty, return exactly one resolution per finding ID: fixed, rejected with
 concrete evidence, or deferred (minor only). Human findings must be fixed.
+Fill brief in everyday words: what readers will notice, 3-5 steps a person can
+follow to check it, and what is still missing or unverified.

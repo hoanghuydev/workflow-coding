@@ -223,7 +223,7 @@ RESEARCH_GRAPH = build_research_graph()
 
 
 class Pipeline:
-    def __init__(self, directory, prepared, retry_failed=False, max_calls=None, revalidate=False):
+    def __init__(self, directory, prepared, retry_failed=False, max_calls=None, revalidate=False, timeout=None):
         self.directory = directory
         self.prepared = prepared
         self.state = State(directory)
@@ -231,7 +231,7 @@ class Pipeline:
         self.revalidate = revalidate
         self.max_calls = runtime.read_json(directory / "run.json")["max_calls"] if max_calls is None else max_calls
         self.runner = JobRunner(directory, prepared["config"], prepared["policy"], self.state,
-                                timeout=prepared["settings"]["timeout"], max_calls=self.max_calls,
+                                timeout=timeout or prepared["settings"]["timeout"], max_calls=self.max_calls,
                                 retry_failed=retry_failed, revalidate=revalidate)
         self.blockers = self.runner.blockers
         self.claims = []
@@ -375,7 +375,8 @@ def render_report(run_id, prepared, status, claims, rows, blockers, synthesis):
 
 
 async def run(root, prepared=None, resume=None, retry_failed=False, max_calls=None, revalidate=False,
-              runs_dir=None, run_id=None):
+              runs_dir=None, run_id=None, timeout=None):
+    """timeout overrides the sealed per-job timeout for this run only (a retry after a job timed out)."""
     if resume:
         directory = Path(resume).resolve()
         if not directory.is_dir():
@@ -390,7 +391,8 @@ async def run(root, prepared=None, resume=None, retry_failed=False, max_calls=No
         prepared = load_sealed(directory)
         if resume and await versions(prepared["config"]) != runtime.read_json(directory / "snapshots/versions.json"):
             raise ValueError("CLI versions changed since the sealed run")
-        pipeline = Pipeline(directory, prepared, retry_failed=retry_failed, max_calls=max_calls, revalidate=revalidate)
+        pipeline = Pipeline(directory, prepared, retry_failed=retry_failed, max_calls=max_calls, revalidate=revalidate,
+                            timeout=timeout)
         run_meta = runtime.read_json(directory / "run.json")
         runtime.write_json(directory / "run.json", {**run_meta, "max_calls": pipeline.max_calls,
                                                    "status": "running", "updated_at_utc": now()})

@@ -8,8 +8,16 @@ acceptance criteria and do not refactor unrelated code.
 Add or update automated tests that prove each acceptance criterion and each fixed
 defect; a new test must fail without your change. Run the relevant tests when the
 command is permitted and report commands_run truthfully, including failures. The
+exact test_command is permitted as given: run it before you finish. The
 supervisor commits your work and runs the test command itself: your report is a
 claim, not evidence.
+
+When baseline_tests is present, the supervisor's test command already failed on
+the base commit before any change; read its tail first. A failure there is either
+the behaviour this task fixes or a broken test setup inside the repository (for
+example missing test configuration): make the command pass in this round. If it
+needs something outside the repository, such as a service or a secret, say so in
+open_questions.
 
 Fix root causes on the change path. If you find a defect on that path that
 affects money, permissions or data integrity, fix it with a test or record it in
@@ -21,4 +29,6 @@ When findings_to_resolve is non-empty, return exactly one resolution per finding
 ID: fixed (with a test where behaviour changed), rejected (with concrete evidence),
 or deferred (minor scope only, with a reason). Human findings must be fixed.
 List every changed file in changes and every test file in tests with the
-acceptance criterion IDs it covers.
+acceptance criterion IDs it covers. Fill brief in everyday words: what users will
+notice, 3-5 steps a person can follow in the running product to see it work, and
+what is still not handled or not verified.

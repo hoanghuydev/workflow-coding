@@ -8,6 +8,8 @@ với research.
 
 ```mermaid
 flowchart TD
+    B[baseline<br/>test trên commit gốc] -->|lệnh test không chạy được| BG{{blocked gate}}
+    B --> T
     T[triage] -->|cần nguồn| RG{{research gate}}
     T -->|có --brief| R[research graph<br/>13 call]
     RG -->|brief| R
@@ -15,14 +17,16 @@ flowchart TD
     RG -->|bỏ qua| P
     R --> P
     P --> PR[PRD review] -->|blocker/major, còn vòng| P
-    PR --> PG{{PRD gate}} --> S[techspec draft]
-    PR -->|tier không có gate| S
+    PR -->|cần người quyết, hoặc hết vòng| PG{{PRD gate}} --> S[techspec draft]
+    PR -->|sạch| S
     S --> SR[techspec review] -->|blocker/major, còn vòng| S
-    SR --> SG{{techspec gate}} --> I[implement<br/>worktree, write]
-    SR -->|tier không có gate| I
+    SR -->|cần người quyết, hoặc hết vòng| SG{{techspec gate}} --> I[implement<br/>worktree, write]
+    SR -->|sạch| I
     T -->|P3: không viết tài liệu| I
-    I --> X[run tests<br/>supervisor chạy] --> CR[code review<br/>song song theo tier]
-    CR -->|test fail hoặc blocker/major, còn vòng| I
+    I --> X[run tests<br/>supervisor chạy]
+    X -->|test fail, còn vòng: bỏ qua review| I
+    X --> CR[code review<br/>song song theo tier]
+    CR -->|blocker/major, còn vòng| I
     CR --> RL{{release gate}} -->|approve| F[finalize]
     RL -->|revise| I
     PG & SG -->|revise| P & S
@@ -75,12 +79,17 @@ Ba lớp cấu hình tách nhau:
 Một mục trong `roles` có thể là tên persona, hoặc dạng `{"persona", "model", "effort"}`
 để đổi model hay effort riêng cho bước đó. Dạng thứ hai không được đổi runtime.
 
-| Tier | Ví dụ | Tài liệu | Gate | Implement | Code review |
+| Tier | Ví dụ | Tài liệu | Gate luôn dừng | Implement | Code review |
 | --- | --- | --- | --- | --- | --- |
-| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | PRD, techspec, release | engineer (Codex Sol high) | code-reviewer (Opus high) + critical-invariants-reviewer (Opus xhigh) + adversarial-qa (Antigravity) |
-| P1 | deploy, migration, tích hợp | PRD + techspec | PRD, techspec, release | engineer (Sol high) | code-reviewer (Opus high) + adversarial-qa |
-| P2 | danh sách, bộ lọc, dashboard | PRD + techspec | techspec, release | engineer (Sol medium) | code-reviewer (Sonnet high) |
+| P0 | tiền, idempotency, quyền, cách ly merchant | PRD + techspec | release | engineer (Codex Sol high) | code-reviewer (Opus high) + critical-invariants-reviewer (Opus xhigh) + adversarial-qa (Antigravity) |
+| P1 | deploy, migration, tích hợp | PRD + techspec | release | engineer (Sol high) | code-reviewer (Opus high) + adversarial-qa |
+| P2 | danh sách, bộ lọc, dashboard | PRD + techspec | release | engineer (Sol medium) | code-reviewer (Sonnet high) |
 | P3 | demo, thử nghiệm | không | release | engineer (Sol medium) | code-reviewer (Sonnet high) |
+
+Cổng PRD và techspec chỉ dừng khi cần người: reviewer đánh dấu `needs_decision` cho
+một lựa chọn nghiệp vụ mà request, rule và repo không trả lời được, hoặc hết vòng mà vẫn
+còn blocker/major. Muốn luôn duyệt một tài liệu thì thêm gate đó vào `gates` của tier.
+Loại `design` luôn dừng ở đặc tả UX.
 
 Các bước còn lại:
 
@@ -144,14 +153,41 @@ dụng cho các bước sau, không chạy lại các gate đã qua.
   Báo cáo implement (`commands_run`, `summary`) được đưa cho reviewer dưới tên
   `implementation_claims`, không phải bằng chứng. Hết vòng mà PRD/techspec còn
   blocker/major thì luôn dừng ở gate của tài liệu đó, kể cả khi tier không có gate ấy.
+- **Câu hỏi nghiệp vụ lên người ngay.** Finding blocker/major có `needs_decision` và ít
+  nhất hai phương án đưa tài liệu tới gate ngay ở vòng đó, không qua thêm vòng soạn: tác
+  giả sẽ phải tự đặt quy tắc, và vòng review sau lại bắt lỗi quy tắc tự đặt. Chỉ chính
+  sách mà request, rule, sổ quyết định và repo để ngỏ mới là câu hỏi. Lỗi đúng/sai, bảo
+  mật, dữ liệu, hay một phương án đi ngược mục tiêu của request, là finding thường.
+  Chi tiết đổi lại được (timeout, câu chữ) là `assumptions` của tác giả. Gate liệt kê
+  Q1, Q2... (câu ⚠ trước), kèm phương án, đề xuất của reviewer, lựa chọn của tác giả và
+  hai AI có đồng ý không.
+- **Trả lời được kiểm trước khi resume.** `approve` bị từ chối khi còn câu hỏi. `revise
+  --note "Q1: ..."` trả lời theo số; `--accept-recommendations` nhận đề xuất cho các câu
+  còn lại, trừ câu ⚠ phải ghi riêng. Kiểm ở `flow_task.advance` trước khi graph chạy,
+  vì lỗi trong node sau `interrupt()` sẽ giữ câu trả lời sai lại ở gate.
+- **Sổ quyết định của dự án.** Trước vòng implement đầu, supervisor ghi câu trả lời và
+  `assumptions` của task vào `docs/flow-decisions.md` trên nhánh `flow/<id>` (một commit
+  riêng, chỉ file đó), ghi rõ người chọn, người chấp nhận đề xuất AI, hay AI tự quyết.
+  File được merge cùng code và được đọc như rule dự án ở task sau.
+- **Hai lớp trình bày.** PRD, đặc tả UX, techspec và báo cáo implement có `brief` bằng
+  lời thường; tài liệu và gate file đặt phần này lên đầu, chi tiết ở dưới. Reviewer coi
+  brief che rủi ro là finding major.
+- **Reviewer chỉ đọc bản build xanh.** Test của supervisor fail mà còn vòng thì quay lại
+  implement ngay, không gọi reviewer; finding của vòng đó chỉ là kiểm tra của
+  supervisor. Vòng cuối luôn được review để người ở release gate có ý kiến reviewer.
+- **Baseline trước mọi lượt gọi model.** Node `baseline` chạy lệnh test trên commit gốc
+  (`tests/baseline.{json,log}`). Fail là bình thường với bug hoặc request viết test
+  trước: implementer vòng 1 nhận `baseline_tests`. Lệnh không chạy được (`error`,
+  `timeout`) thì dừng ở blocked gate với `retry`, `approve` (chạy tiếp) hoặc `reject`.
 - **Research là một lần chạy độc lập.** Node `research` gọi research graph trong
   context rỗng và không có checkpoint, nên mỗi lần chạy lại đều đi qua ledger và
   kiểm hash của research, không phát lại state cũ của LangGraph.
 - **Kiểm tra tất định.** Lỗi cứng (ID trùng, tham chiếu không tồn tại, finding chưa
   được xử lý đúng một lần, file không có trong repo) làm output bị loại. Lỗi mềm
   (requirement *must* thiếu AC, AC không có test plan, file khai đã sửa nhưng diff
-  không có, vòng implement không tạo thay đổi) thành finding `supervisor/...` để
-  reviewer và người duyệt thấy.
+  vòng này không có, file test khai báo nhưng không tồn tại, vòng implement khai đã
+  sửa mà không tạo thay đổi) thành finding `supervisor/...` để reviewer và người duyệt
+  thấy. File test có từ vòng trước vẫn hợp lệ.
 - **Người là finding cấp cao nhất.** `revise --note` tạo finding `human/D<n>` mức
   blocker; vòng sau phải trả resolution cho đúng ID đó. Note khi `approve` trở thành
   `human_guidance` cho các bước sau.
@@ -171,8 +207,8 @@ dụng cho các bước sau, không chạy lại các gate đã qua.
 Mọi packet có mục `# Rules (binding)` chứa nguyên văn các rule:
 
 1. Rule chung: `rules/*.md` của repo này, trừ README.md.
-2. Rule dự án: `AGENTS.md`, `CLAUDE.md` ở gốc repo đích, và các file truyền bằng
-   `--rules`. Các file này được đọc từ commit gốc (`base_sha`), nên agent sửa chúng
+2. Rule dự án: `AGENTS.md`, `CLAUDE.md` và `docs/flow-decisions.md` (sổ quyết định do
+   flow ghi) ở repo đích, và các file truyền bằng `--rules`. Các file này được đọc từ commit gốc (`base_sha`), nên agent sửa chúng
    trong worktree cũng không làm đổi rule của task.
 
 Rule đứng trên skill, nhưng không đổi được quyền, protocol hay schema. Reviewer
@@ -180,6 +216,9 @@ code và techspec kiểm theo rule. Vi phạm rule thành finding `rule-violatio
 viết dạng *must*/*never* được tính ít nhất `major`, nên vi phạm sẽ kéo thêm vòng sửa.
 
 ## Skill
+
+Review PRD, đặc tả UX và techspec mang skill `decision-review` để mỗi đề xuất có căn cứ,
+có phương án thực sự khác và nêu điều kiện làm đổi đề xuất.
 
 Skill nằm trong mục `# Skill guidance` của packet, xếp sau rule, và đến từ hai nơi:
 
@@ -226,6 +265,24 @@ release gate, không làm hỏng job. Supervisor tự chạy test nên lệnh b�
 thể giả là đã đạt. Thư mục riêng và permission của CLI chưa phải cách ly hệ điều
 hành; chạy test của repo đích nghĩa là chạy code do agent viết trên máy này.
 
+## Thời gian chạy và theo dõi
+
+- **Timeout theo bước.** `--timeout` (mặc định 900 giây) áp cho mọi job, rồi
+  `timeouts` trong `config/flow.json` nâng lên mức sàn theo bước: `implement` 3600,
+  `review` 1200 (review tài liệu và review code). `--timeout` ở `approve`, `revise`,
+  `retry` đổi giá trị cho các bước sau, không hạ dưới mức sàn.
+- **`--detach`.** Lệnh gọi model chạy supervisor trong session riêng, ghi log vào
+  `tasks/supervisor-logs/` và theo dõi log đó tới khi supervisor dừng. Lệnh theo dõi
+  bị giết (đóng terminal, phiên trợ lý kết thúc) thì supervisor và các job vẫn chạy.
+  Supervisor ghi `tasks/<id>/supervisor.json` khi giữ lock.
+- **`wait <id>`.** Chờ tới khi không còn supervisor nào chạy task, rồi in trạng thái
+  với mã thoát như lệnh gốc (0, 2, 1).
+- **`status <id>`.** In supervisor có đang chạy không, job nào đang chạy và bao lâu,
+  mỗi vòng một dòng (review có bao nhiêu blocker/major, bao nhiêu câu cần người quyết,
+  test vòng đó ra sao, review có bị bỏ qua vì test fail không) và các quyết định của
+  người. `--timeline` liệt kê mọi job kèm giờ bắt đầu và thời lượng. Khi supervisor
+  đang chạy, `status` thoát với mã 3.
+
 ## Thư mục task
 
 ```text
@@ -236,7 +293,9 @@ tasks/<task-id>/
   worktree/                          git worktree, nhánh flow/<task-id>
   docs/prd.md, uxspec.md, techspec.md  bản render mới nhất (+ prd-rN.md theo vòng)
   gates/*.md                         tóm tắt cho người duyệt và lệnh trả lời
+  tests/baseline.{log,json}          test trên commit gốc, trước lượt gọi model đầu tiên
   tests/round-N.{log,json}           kết quả test do supervisor chạy
+  supervisor.json                    tiến trình đang giữ lock (khi có)
   research/                          run research khi có brief
   report.md
 ```

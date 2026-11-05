@@ -18,6 +18,12 @@ ZERO_TEST = ("import unittest\n\nfrom fees import transfer_fee\n\n\nclass ZeroFe
              "    def test_zero_amount_has_zero_fee(self):\n        self.assertEqual(transfer_fee(0), 0)\n")
 
 
+BRIEF = {"what_changes": ["Phí chuyển khoản được tính đúng 1,1%"], "main_flow": ["Nhập số tiền", "Xem phí"],
+         "not_doing": ["Không đổi biểu phí"], "risks": ["Số tiền rất lớn chưa được thử"]}
+IMPLEMENT_BRIEF = {"what_changed": ["Phí được làm tròn lên"], "how_to_check": ["Nhập 100.000 đồng", "Thấy phí 1.100"],
+                   "known_limits": []}
+
+
 def flow_report(stage, context, behavior):
     """Synthetic outputs for the work flow; the implement stage edits the demo worktree."""
     resolutions = [{"finding_id": f["id"], "disposition": "fixed", "reason": "Synthetic resolution."}
@@ -38,7 +44,9 @@ def flow_report(stage, context, behavior):
                      "then": "phí 1100"},
                     {"id": "AC2", "requirement_ids": ["R2"], "given": "amount -1", "when": "tính phí",
                      "then": "ValueError"}],
-                "risks": [], "open_questions": [], "resolutions": resolutions}
+                "risks": [], "open_questions": [], "resolutions": resolutions, "brief": BRIEF,
+                "assumptions": [{"question": "Làm tròn thế nào?", "choice": "Làm tròn lên tới đồng",
+                                 "reason": "Request nói làm tròn lên."}]}
     if stage == "techspec":
         return {"summary": "Synthetic techspec.", "approach": "Sửa fees.py.",
                 "components": [{"name": "fees", "change": "Viết transfer_fee", "files": ["fees.py"]}],
@@ -46,7 +54,7 @@ def flow_report(stage, context, behavior):
                 "failure_modes": [{"case": "amount < 0", "handling": "ValueError"}],
                 "test_plan": [{"id": "T1", "covers": criteria, "level": "unit", "description": "test_fees.py"}],
                 "tasks": [{"id": "K1", "title": "Viết transfer_fee", "description": "Theo PRD.", "files": ["fees.py"]}],
-                "rollout": [], "open_questions": [], "resolutions": resolutions}
+                "rollout": [], "open_questions": [], "resolutions": resolutions, "brief": BRIEF, "assumptions": []}
     if stage == "uxspec":
         return {"summary": "Synthetic UX spec.", "users": ["Merchant"],
                 "journeys": [{"id": "J1", "goal": "Xem phí", "steps": ["Nhập số tiền", "Xem phí"], "covers": criteria}],
@@ -54,16 +62,35 @@ def flow_report(stage, context, behavior):
                 "components": [{"name": "Ô nhập", "reuse": "Dùng ô nhập có sẵn"}],
                 "copy": [{"key": "error.negative", "text": "Số tiền phải lớn hơn 0"}],
                 "accessibility": ["Ô nhập có nhãn"], "responsive": ["Một cột trên màn hình hẹp"],
-                "decisions": [], "open_questions": [], "resolutions": resolutions}
+                "decisions": [], "open_questions": [], "resolutions": resolutions, "brief": BRIEF}
     if stage in {"write-docs", "write-content"}:
         target = Path("docs/fees.md" if stage == "write-docs" else "content/home.md")
         target.parent.mkdir(exist_ok=True)
         target.write_text("# Phí chuyển khoản\n\nPhí 1,1%, làm tròn lên.\n")
         return {"summary": f"Synthetic {stage}.", "changes": [{"file": str(target), "description": "Synthetic."}],
-                "tests": [], "commands_run": [], "resolutions": resolutions, "open_questions": []}
+                "tests": [], "commands_run": [], "resolutions": resolutions, "open_questions": [],
+                "brief": IMPLEMENT_BRIEF}
     if stage in {"prd-review", "uxspec-review", "techspec-review"}:
-        findings = [{"id": "F1", "target": "overall", "severity": "major", "reason": "Synthetic objection.",
-                     "suggestion": "Synthetic fix."}] if behavior == "blocking" else []
+        plain = {"needs_decision": False, "options": [], "critical": False, "author_choice": "",
+                 "agrees_with_author": False}
+        findings = []
+        if behavior == "blocking":
+            findings = [{"id": "F1", "target": "overall", "severity": "major", "reason": "Synthetic objection.",
+                         "suggestion": "Synthetic fix.", **plain}]
+        if behavior in {"decision", "decisions"}:  # policy questions the author cannot settle
+            findings = [{"id": "F1", "target": "overall", "severity": "major",
+                         "reason": "Phí tối thiểu cho giao dịch nhỏ là bao nhiêu?",
+                         "suggestion": "Chọn 1: giữ đúng 1,1% như request.", "needs_decision": True,
+                         "options": ["Không có phí tối thiểu", "Phí tối thiểu 1.000 đồng"], "critical": False,
+                         "author_choice": "Không có phí tối thiểu", "agrees_with_author": True}]
+        if behavior == "decisions":
+            findings.append({"id": "F2", "target": "overall", "severity": "blocker",
+                             "reason": "Ai được hoàn phí khi giao dịch lỗi?", "suggestion": "Chọn 2: chỉ quản trị viên.",
+                             "needs_decision": True, "options": ["Mọi nhân viên", "Chỉ quản trị viên"],
+                             "critical": True, "author_choice": "Mọi nhân viên", "agrees_with_author": False})
+            findings.append({"id": "F3", "target": "overall", "severity": "major", "reason": "Một phương án thôi?",
+                             "suggestion": "Sửa.", "needs_decision": True, "options": ["Chỉ một"],
+                             "critical": False, "author_choice": "", "agrees_with_author": False})
         return {"summary": "Synthetic document review.", "findings": findings, "limitations": []}
     if stage == "implement":
         changes, tests = [], []
@@ -77,7 +104,7 @@ def flow_report(stage, context, behavior):
             tests.append({"file": "test_fees_zero.py", "covers": criteria})
         return {"summary": "Synthetic implementation.", "changes": changes, "tests": tests,
                 "commands_run": [{"command": "python -m unittest", "exit_code": 0, "note": "synthetic claim"}],
-                "resolutions": resolutions, "open_questions": []}
+                "resolutions": resolutions, "open_questions": [], "brief": IMPLEMENT_BRIEF}
     if stage in {"code-review", "qa", "docs-review", "content-review", "ui-review"}:
         findings = [{"id": "F1", "severity": "major", "kind": "correctness", "file": "fees.py", "line": 1,
                      "reason": "Synthetic objection.", "suggestion": "Synthetic fix."}] if behavior == "blocking" else []
