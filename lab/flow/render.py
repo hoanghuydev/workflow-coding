@@ -94,7 +94,7 @@ def gate_md(kind, task_id, state, extra):
         lines += [f".venv/bin/python run_flow.py research {task_id} --brief <brief-có-Source.md>",
                   f".venv/bin/python run_flow.py approve {task_id}   # bỏ qua research"]
     elif kind == "blocked":
-        lines += [f".venv/bin/python run_flow.py retry {task_id} [--max-calls N]   # sau khi đã xem log"]
+        lines += [f".venv/bin/python run_flow.py retry {task_id} [--max-calls N] [--timeout S]   # sau khi đã xem log"]
         if state.get("blocked", {}).get("node") == "research":
             lines += [f".venv/bin/python run_flow.py approve {task_id}   # tiếp tục với research thiếu coverage"]
     else:

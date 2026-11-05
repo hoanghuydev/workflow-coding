@@ -4,6 +4,9 @@ Return the PRD schema. Describe what must be true for users, not how to build it
 Write narrow, testable requirements with stable IDs (R1, R2, ...) and a priority.
 Every must requirement needs at least one acceptance criterion (AC1, ...) in
 Given/When/Then form that a test or a person can check without interpretation.
+Keep the three parts apart: `given` is the starting state, `when` is only the
+action, and `then` is the expected outcome. Never write the outcome into `when`,
+and never leave `then` empty.
 State non-goals explicitly so the scope stays as small as the request allows.
 Read the repository only to understand current behaviour and vocabulary.
 For a defect report, state the observed and the expected behaviour, and make the

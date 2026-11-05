@@ -67,6 +67,7 @@ class FlowState(TypedDict, total=False):
     limits: dict
     retry: dict
     max_calls: int
+    job_timeout: int
     blocked: Any
     decisions: Annotated[list, operator.add]
     status: str
@@ -110,6 +111,7 @@ async def call(task, state, *, job_id, protocol, ref, context, schema, validate,
     persona_id, override = binding(ref)
     persona = task.personas[persona_id]
     task.runner.max_calls = state.get("max_calls") or task.settings["max_calls"]
+    task.runner.timeout = state.get("job_timeout") or task.settings["timeout"]
     row = task.state.get(job_id)
     # Retry only the attempt the human saw; a later failed attempt needs a new decision.
     retry = row is not None and state.get("retry", {}).get(job_id) == row["attempts"]
@@ -399,6 +401,8 @@ def decide(task, state, gate, decision, allowed):
     if decision.get("risk"):
         update.update(risk_update(task, decision["risk"]))
         record["risk"] = decision["risk"]
+    if decision.get("timeout"):
+        update["job_timeout"] = record["timeout"] = decision["timeout"]
     return action, note, update
 
 
@@ -584,7 +588,9 @@ async def blocked_gate(state, runtime: Runtime[FlowContext]):
         grants = {job: (task.state.get(job) or {}).get("attempts", 0) for job in info["jobs"]}
     # Keep `blocked` until the node runs again: the research node reads its reasons.
     return Command(goto=info["node"], update={**update, "retry": grants, "status": "running",
-                                              "max_calls": decision.get("max_calls") or limit})
+                                              "max_calls": decision.get("max_calls") or limit,
+                                              "job_timeout": (decision.get("timeout") or state.get("job_timeout")
+                                                              or task.settings["timeout"])})
 
 
 async def finalize(state, runtime: Runtime[FlowContext]):

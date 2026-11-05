@@ -84,6 +84,27 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["error"], "timeout")
         self.assert_not_running(int((directory / "codex/child.pid").read_text()))
 
+    async def test_agy_that_hangs_after_its_result_is_collected_without_waiting_for_the_timeout(self):
+        with patch.object(run_lab, "TIMEOUT", 20), patch.object(run_lab, "AGY_RESULT_GRACE", 0.3):
+            row, directory = await self.run_worker("antigravity", "hang_after_result")
+        self.assertEqual(row["status"], "collected_unverified")
+        self.assertTrue(row["stopped_after_result"])
+        self.assertLess(row["duration_seconds"], 10)
+        self.assertTrue((directory / "antigravity/report.json").is_file())
+        self.assert_not_running(int((directory / "antigravity/child.pid").read_text()))
+
+    async def test_agy_failure_result_is_still_rejected_when_the_process_hangs(self):
+        with patch.object(run_lab, "TIMEOUT", 20), patch.object(run_lab, "AGY_RESULT_GRACE", 0.3):
+            row, _ = await self.run_worker("antigravity", "hang_after_result_error")
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["error"], "provider_failure")
+        self.assertLess(row["duration_seconds"], 10)
+
+    async def test_hanging_claude_still_times_out(self):
+        with patch.object(run_lab, "TIMEOUT", 0.5):
+            row, _ = await self.run_worker("claude", "hang_after_result")
+        self.assertEqual(row["error"], "timeout")
+
     async def test_provider_print_timeout_is_not_accepted_even_with_valid_report(self):
         row, directory = await self.run_worker("antigravity", "provider_timeout")
         self.assertEqual(row["status"], "failed")

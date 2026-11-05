@@ -219,7 +219,7 @@ Then tell the user, briefly:
 | changes | `revise <id> --note "..."`: keep their wording and add section or file references. The next round must resolve the note as a blocker |
 | to stop | `reject <id> --note "<reason>"` |
 | to supply sources (research gate) | write a brief (format: `inputs/brief.md`), then `research <id> --brief <file>`. To skip research: `approve <id>` |
-| to retry after a block | explain the cause first, then `retry <id>`; add `--max-calls N` if the call limit was hit |
+| to retry after a block | explain the cause first, then `retry <id>`; add `--max-calls N` if the call limit was hit, `--timeout S` if a job timed out on a large change |
 
 If you fetch sources for a brief, put the URL and retrieval time in each `Source`
 section and tell the user which sources you chose. Then run the command as described

@@ -21,6 +21,15 @@ def enum(*values):
     return {"type": "string", "enum": list(values)}
 
 
+def described(text):
+    return {**TEXT, "description": text}
+
+
+# Without these descriptions models tended to write "When ...; Then ..." into `when` and leave `then` empty.
+GIVEN = described("Precondition or starting state only. No action and no outcome.")
+WHEN = described("The action or event under test only. Never the expected outcome: that belongs in `then`.")
+THEN = described("Required and non-empty. The observable expected outcome a test or a person checks. "
+                 "Do not repeat it in `when`.")
 RESOLUTION = obj({"finding_id": TEXT, "disposition": enum("fixed", "rejected"), "reason": TEXT})
 TRIAGE = obj({"summary": TEXT, "risk": enum(*RISKS), "risk_reason": TEXT, "needs_research": BOOL,
               "research_questions": array(TEXT), "affected_areas": array(TEXT), "open_questions": array(TEXT)})
@@ -28,7 +37,7 @@ PRD = obj({"title": TEXT, "summary": TEXT, "problem": TEXT, "goals": array(TEXT)
            "users": array(TEXT),
            "requirements": array(obj({"id": TEXT, "text": TEXT, "priority": enum("must", "should", "could")})),
            "acceptance_criteria": array(obj({"id": TEXT, "requirement_ids": array(TEXT),
-                                             "given": TEXT, "when": TEXT, "then": TEXT})),
+                                             "given": GIVEN, "when": WHEN, "then": THEN})),
            "risks": array(TEXT), "open_questions": array(TEXT), "resolutions": array(RESOLUTION)})
 TECHSPEC = obj({"summary": TEXT, "approach": TEXT,
                 "components": array(obj({"name": TEXT, "change": TEXT, "files": array(TEXT)})),
@@ -141,7 +150,10 @@ def validate_prd(prd, required):
         nonblank(requirement["text"])
     for criterion in prd["acceptance_criteria"]:
         for key in ("given", "when", "then"):
-            nonblank(criterion[key])
+            try:
+                nonblank(criterion[key])
+            except ValueError:
+                raise ValueError(f"Acceptance criterion {criterion['id']}: field '{key}' is empty") from None
         if not criterion["requirement_ids"] or not set(criterion["requirement_ids"]) <= set(requirement_ids):
             raise ValueError(f"Acceptance criterion {criterion['id']} cites an unknown requirement")
     check_resolutions(prd["resolutions"], required)

@@ -51,12 +51,14 @@ def arguments(argv=None):
         parser_.add_argument("--note", default="", required=name == "revise")
         if name != "reject":
             parser_.add_argument("--risk", choices=RISKS, help="Change the risk tier from here on")
+            parser_.add_argument("--timeout", type=int, help="Seconds per CLI job from here on")
     research = sub.add_parser("research", help="Answer the research gate with a brief")
     research.add_argument("task")
     research.add_argument("--brief", required=True)
     retry = sub.add_parser("retry", help="Retry the blocked job after inspecting its logs")
     retry.add_argument("task")
     retry.add_argument("--max-calls", type=int, help="Raise the task's model call limit")
+    retry.add_argument("--timeout", type=int, help="Seconds per CLI job from here on (e.g. for a long implement)")
     sub.add_parser("list", help="List tasks and what each is waiting for")
     sub.add_parser("graph", help="Print the flow graph as Mermaid")
     args = parser.parse_args(argv)
@@ -67,6 +69,8 @@ def arguments(argv=None):
             parser.error("start needs --request and --repo, or --demo")
     if getattr(args, "max_calls", None) is not None and args.max_calls <= 0:
         parser.error("--max-calls must be positive")
+    if args.command in ("approve", "revise", "retry") and args.timeout is not None and args.timeout <= 0:
+        parser.error("--timeout must be positive")
     return args
 
 
@@ -172,6 +176,8 @@ async def run(args):
                 decision["brief"] = flow_task.copy_brief(task, args.brief)
             if args.command == "retry" and args.max_calls:
                 decision["max_calls"] = args.max_calls
+            if args.command in ("approve", "revise", "retry") and args.timeout:
+                decision["timeout"] = args.timeout
             return show(task, await flow_task.advance(task, Command(resume=decision)))
     finally:
         task.close()

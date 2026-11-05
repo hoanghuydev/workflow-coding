@@ -103,7 +103,8 @@ behavior = behaviors.get(job, behaviors.get(name, "success"))
 context = json.loads(packet.split("<<<CONTEXT\n", 1)[1].split("\nCONTEXT>>>", 1)[0]) if "<<<CONTEXT\n" in packet else {}
 if behavior_file.exists():
     fd = os.open(Path(__file__).parent / "calls.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    os.write(fd, (json.dumps({"job": job, "worker": name, "stage": stage}) + "\n").encode())
+    os.write(fd, (json.dumps({"job": job, "worker": name, "stage": stage,
+                              "path_hint": "absolute paths only" in stdin}) + "\n").encode())
     os.close(fd)
 report = {
     "summary": "Accept only completed, schema-valid results.",
@@ -181,7 +182,7 @@ else:
         if behavior == "provider_failure":
             envelope["is_error"] = True
     else:
-        envelope["status"] = "ERROR" if behavior == "provider_failure" else "SUCCESS"
+        envelope["status"] = "ERROR" if behavior in {"provider_failure", "hang_after_result_error"} else "SUCCESS"
     if behavior == "missing_structured":
         del envelope["structured_output"]
     if behavior == "provider_timeout":
@@ -189,4 +190,9 @@ else:
         envelope["finished_reason"] = "print_timeout"
     if behavior == "structured_denial":
         envelope["permission_denials"] = [{"tool_name": "Read", "tool_use_id": "synthetic"}]
-    print(json.dumps({"event": "result", "result": envelope} if name == "antigravity" else envelope))
+    print(json.dumps({"event": "result", "result": envelope} if name == "antigravity" else envelope), flush=True)
+    if behavior in {"hang_after_result", "hang_after_result_error"}:
+        # Seen with agy: the final result event is written, then the process never exits.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        Path("child.pid").write_text(str(child.pid))
+        time.sleep(60)

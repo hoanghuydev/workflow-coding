@@ -241,7 +241,7 @@ Two special gates:
 | Gate | When | How to answer |
 | --- | --- | --- |
 | `research` | Triage needs outside facts the repo doesn't have | `research <id> --brief sources.md`, or `approve` to skip |
-| `blocked` | A model call failed, timed out, or hit `--max-calls` | Read the logs in `tasks/<id>/jobs/`, then `retry <id> [--max-calls 60]` or `reject` |
+| `blocked` | A model call failed, timed out, or hit `--max-calls` | Read the logs in `tasks/<id>/jobs/`, then `retry <id> [--max-calls 60] [--timeout 2700]` or `reject`. `approve` and `revise` also take `--timeout` when the next step is a large change |
 
 The flow never retries on its own. If your machine shuts down or you press Ctrl-C, run
 `run_flow.py resume <task-id>`: finished calls are reused, not paid for twice.

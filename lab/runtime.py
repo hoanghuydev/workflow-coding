@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TIMEOUT = 180  # seconds per worker; not a dollar spending cap
 BRIEF = "inputs/brief.md"  # relative to ROOT; overridable with --brief
 MAX_OUTPUT = 8 * 1024 * 1024  # bytes per stream; checked periodically
+AGY_RESULT_GRACE = 5  # seconds agy may take to exit after writing its final result event
 
 
 def read_json(path):
@@ -74,6 +75,33 @@ def preflight(config_override=None):
     return config, schema, policy_document, brief
 
 
+class ResultWatch:
+    """Spots a complete `{"event": "result"}` line in an agy stream-json log while it is written."""
+
+    def __init__(self, path):
+        self.path, self.offset, self.tail = path, 0, b""
+
+    def seen(self):
+        try:
+            with self.path.open("rb") as stream:
+                stream.seek(self.offset)
+                chunk = stream.read()
+        except FileNotFoundError:
+            return False
+        self.offset += len(chunk)
+        lines = (self.tail + chunk).split(b"\n")
+        self.tail = lines.pop()
+        for line in lines:
+            if b'"result"' not in line:
+                continue
+            try:
+                if json.loads(line).get("event") == "result":
+                    return True
+            except (ValueError, AttributeError):
+                continue
+        return False
+
+
 async def stop_tree(proc):
     if os.name == "nt":
         if proc.returncode is None:
@@ -103,6 +131,11 @@ async def stop_tree(proc):
 ACCESS_MODES = ("packet", "read", "write")
 _SUBMIT = ("Return the required JSON using the CLI's native structured-output mechanism; "
            "a tool used solely to submit that structured result is permitted.\n\n")
+# Antigravity has ended headless runs with no output after one failed tool call (a relative path, a
+# denied command), so the repository-reading roles get these constraints spelled out.
+AGY_TOOL_HINT = ("File tools take absolute paths only; the repository root is {cwd}. Shell commands are "
+                 "denied, so do not run them. If a tool call fails, continue and still return the final "
+                 "answer in the required format.\n\n")
 PROMPTS = {
     # Supply the complete identical packet inline: reading via a shell would
     # conflict with the fixture's explicit prohibition on running commands.
@@ -174,7 +207,8 @@ async def worker(name, cfg, run_dir, schema, *, packet=None, validate_output=Non
     (work / "INPUT.md").write_bytes(packet if packet is not None else (run_dir / "brief.snapshot.md").read_bytes())
     prefix = cfg["prefix"]
     effort = cfg.get("effort")
-    prompt = PROMPTS[access] + (work / "INPUT.md").read_text(encoding="utf-8")
+    hint = AGY_TOOL_HINT.format(cwd=cwd or work) if name == "antigravity" and access != "packet" else ""
+    prompt = PROMPTS[access] + hint + (work / "INPUT.md").read_text(encoding="utf-8")
 
     started = time.monotonic()
     meta = {"worker": name, "requested_model": cfg["model"],
@@ -202,12 +236,23 @@ async def worker(name, cfg, run_dir, schema, *, packet=None, validate_output=Non
             stdin_data = (json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
                           if name == "antigravity" else prompt).encode("utf-8")
             waiting = asyncio.create_task(proc.communicate(stdin_data))
+            watch = ResultWatch(work / "stdout.log") if name == "antigravity" else None
+            result_at = None
             while not waiting.done():
-                if time.monotonic() - started > timeout:
+                now = time.monotonic()
+                if now - started > timeout:
                     raise RuntimeError("timeout")
                 if any((work / f).exists() and (work / f).stat().st_size > MAX_OUTPUT
                        for f in ("stdout.log", "stderr.log", "final.json")):
                     raise RuntimeError("output_limit")
+                if watch and result_at is None and watch.seen():
+                    result_at = now
+                if result_at is not None and now - result_at > AGY_RESULT_GRACE:
+                    # agy can write its final result event and then never exit. Waiting for the
+                    # exit would turn a finished job into a timeout, so stop it and parse the log.
+                    meta["stopped_after_result"] = True
+                    await stop_tree(proc)
+                    break
                 await asyncio.sleep(0.2)
             await waiting
             meta["exit_code"] = proc.returncode
@@ -241,7 +286,7 @@ def collect_output(name, work, schema, meta, expected_packet, validate_output=No
     if any((work / f).exists() and (work / f).stat().st_size > MAX_OUTPUT
            for f in ("stdout.log", "stderr.log", "final.json")):
         raise RuntimeError("output_limit")
-    if meta["exit_code"] != 0:
+    if meta["exit_code"] != 0 and not meta.get("stopped_after_result"):
         raise RuntimeError("nonzero_exit")
     access = meta.get("access", "packet")
     raw = (work / "stdout.log").read_text(encoding="utf-8-sig")

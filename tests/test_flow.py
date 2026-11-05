@@ -136,6 +136,42 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         summary = (self.task.directory / snapshot.interrupts[0].value["summary"]).read_text()
         self.assertIn("code-reviewer/F1", summary)
 
+    async def test_timed_out_job_blocks_and_retry_can_raise_the_job_timeout(self):
+        self.behaviors({"prd-draft-1": "sleep"})
+        snapshot = await self.start(timeout=1)
+        self.assertEqual(self.gate(snapshot), "blocked")
+        self.assertIn("timeout", " ".join(snapshot.values["blocked"]["reasons"]))
+        self.behaviors({})
+        seen = []
+        original = runtime.worker
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["timeout"])
+            return await original(*args, **kwargs)
+
+        with patch.object(runtime, "worker", spy):
+            snapshot = await self.decide(action="retry", timeout=120)
+        self.assertEqual(self.gate(snapshot), "techspec")
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {120})  # the retried job and every later job use the raised timeout
+
+    async def test_gate_approval_can_raise_the_job_timeout_for_later_steps(self):
+        snapshot = await self.start()
+        self.assertEqual(self.gate(snapshot), "techspec")
+        seen = []
+        original = runtime.worker
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["timeout"])
+            return await original(*args, **kwargs)
+
+        with patch.object(runtime, "worker", spy):
+            snapshot = await self.decide(action="approve", timeout=77)
+        self.assertEqual(self.gate(snapshot), "release")
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {77})
+        self.assertEqual(snapshot.values["decisions"][-1]["timeout"], 77)
+
     async def test_failed_job_blocks_until_explicit_retry_bound_to_that_attempt(self):
         self.behaviors({"prd-draft-1": "nonzero"})
         snapshot = await self.start()
@@ -200,6 +236,11 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reviewers, {"code-review-code-reviewer-1": "claude",
                                      "code-review-critical-invariants-reviewer-1": "claude",
                                      "code-review-adversarial-qa-1": "antigravity"})
+        # Only Antigravity, which aborts on a failed tool call, gets the absolute-path reminder.
+        hinted = {c["job"]: c["path_hint"] for c in self.calls() if c["job"].startswith("code-review-")}
+        self.assertEqual(hinted, {"code-review-code-reviewer-1": False,
+                                  "code-review-critical-invariants-reviewer-1": False,
+                                  "code-review-adversarial-qa-1": True})
         self.assertEqual(next(c for c in self.calls() if c["job"] == "implement-1")["worker"], "codex")
         # Stage bindings tune one persona per tier: P0 implements at high effort, reviews with Opus.
         manifest = lambda job, worker: runtime.read_json(self.task.directory / "jobs" / job / worker / "manifest.json")
@@ -268,6 +309,23 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             check_roster(no_release, personas, agents)
         with self.assertRaisesRegex(ValueError, "not supported"):
             runtime.cli_args("antigravity", agents["antigravity"], self.root, self.root, {}, 10, "write")
+
+    def test_prd_schema_separates_when_from_then_and_names_an_empty_field(self):
+        from lab.flow import contracts as flow_contracts
+        fields = flow_contracts.PRD["properties"]["acceptance_criteria"]["items"]["properties"]
+        for key in ("given", "when", "then"):
+            self.assertEqual(fields[key]["type"], "string")
+            self.assertTrue(fields[key]["description"].strip())
+        self.assertIn("then", fields["when"]["description"])
+        prd = {"title": "t", "summary": "s", "problem": "p", "goals": [], "non_goals": [], "users": [],
+               "requirements": [{"id": "R1", "text": "r", "priority": "must"}],
+               "acceptance_criteria": [{"id": "AC1", "requirement_ids": ["R1"], "given": "g",
+                                        "when": "When x; Then y", "then": " "}],
+               "risks": [], "open_questions": [], "resolutions": []}
+        with self.assertRaisesRegex(ValueError, r"^Acceptance criterion AC1: field 'then' is empty$"):
+            flow_contracts.validate_prd(prd, [])
+        prd["acceptance_criteria"][0].update(when="x", then="y")
+        flow_contracts.validate_prd(prd, [])
 
     def test_workers_never_load_agents_md_or_claude_md_from_disk(self):
         # Rules reach workers only through the sealed packet.
